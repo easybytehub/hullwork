@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>Hullwork — this instance</title><style>
+:root {
+  color-scheme: light dark;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --ink:    light-dark(#15171c, #e7e9ee);
+  --muted:  light-dark(#5d6470, #98a0ad);
+  --faint:  light-dark(#868d99, #6f7783);
+  --rule:   light-dark(#e2e5ea, #262a31);
+  --canvas: light-dark(#fcfcfd, #0f1115);
+  --raise:  light-dark(#ffffff, #16191f);
+
+  --waiting: light-dark(#8a5a00, #e3a83a);
+  --working: light-dark(#1b5fb0, #6aa9f2);
+  --passed:  light-dark(#12693a, #4fb37d);
+  --refused: light-dark(#a32f26, #ec7d70);
+  --human:   light-dark(#5a3ea8, #ab8df0);
+
+  --r-card: 10px;
+  --r-chip: 6px;
+}
+* { box-sizing: border-box; }
+body {
+  font: 400 15px/1.6 var(--sans);
+  color: var(--ink); background: var(--canvas);
+  margin: 0 auto; max-width: 78rem; padding: 2.5rem 1.5rem 5rem;
+  -webkit-font-smoothing: antialiased;
+}
+h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: -.02em; margin: 0 0 .3rem; }
+h2 { font-size: .78rem; font-weight: 650; letter-spacing: .07em; text-transform: uppercase;
+     color: var(--faint); margin: 2.5rem 0 .75rem; }
+h3 { font-size: 1rem; font-weight: 600; letter-spacing: -.01em; margin: 0 0 .4rem; }
+a { color: inherit; text-underline-offset: 3px; text-decoration-color: var(--rule); }
+a:hover { text-decoration-color: currentColor; }
+.sub { color: var(--muted); margin: 0 0 2rem; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.faint { color: var(--faint); }
+.bad { font-weight: 650; color: var(--refused); }
+
+/* A band is the unit of the daily page: hairline, soft radius, and in light mode the faintest
+   lift so it reads as a surface rather than as a box drawn on the page. */
+.band { background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r-card);
+        padding: 1.1rem 1.25rem; margin: 0 0 1rem;
+        box-shadow: light-dark(0 1px 2px rgb(16 18 28 / .04), none); }
+.band.quiet { background: none; box-shadow: none; }
+
+/* State chips. The tint is derived from the semantic colour so a new state needs one variable,
+   and the word inside is never optional. */
+.chip { display: inline-flex; align-items: center; gap: .4rem; font: 600 .75rem/1 var(--sans);
+        letter-spacing: .01em; padding: .35rem .55rem; border-radius: var(--r-chip);
+        border: 1px solid color-mix(in oklab, var(--c, var(--muted)) 30%, transparent);
+        background: color-mix(in oklab, var(--c, var(--muted)) 12%, transparent);
+        color: var(--c, var(--muted)); white-space: nowrap; }
+.chip::before { content: ""; width: .4rem; height: .4rem; border-radius: 50%;
+                background: currentColor; flex: none; }
+.c-waiting { --c: var(--waiting); } .c-working { --c: var(--working); }
+.c-passed  { --c: var(--passed);  } .c-refused { --c: var(--refused); }
+.c-human   { --c: var(--human);   } .c-idle    { --c: var(--faint);   }
+
+/* The board: one column per group, wrapping down on a narrow screen rather than scrolling out. */
+.board { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
+.col { background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r-card);
+       padding: .85rem .9rem; min-height: 6.5rem; }
+.col h4 { font: 650 .72rem/1 var(--sans); letter-spacing: .06em; text-transform: uppercase;
+          color: var(--faint); margin: 0 0 .6rem; }
+.count { font: 650 1.75rem/1 var(--mono); font-variant-numeric: tabular-nums;
+         letter-spacing: -.03em; color: var(--c, var(--ink)); }
+.count.zero { color: var(--faint); font-weight: 400; }
+/* A tinted number is still a number: the column heading above it carries the meaning. */
+.age { display: block; font-size: .78rem; color: var(--muted); margin-top: .35rem; }
+.col.owed { border-color: color-mix(in oklab, var(--waiting) 45%, var(--rule)); }
+
+/* The six phases of the attempt in flight. */
+.phases { display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0 0;
+          padding: 0; list-style: none; }
+.phase { font: 500 .78rem/1 var(--mono); padding: .4rem .6rem; border-radius: var(--r-chip);
+         border: 1px solid var(--rule); color: var(--faint); }
+.phase.done { color: var(--passed);
+              border-color: color-mix(in oklab, var(--passed) 35%, transparent);
+              background: color-mix(in oklab, var(--passed) 10%, transparent); }
+.phase.live { color: var(--working);
+              border-color: color-mix(in oklab, var(--working) 45%, transparent);
+              background: color-mix(in oklab, var(--working) 12%, transparent); }
+.phase.failed { color: var(--refused);
+                border-color: color-mix(in oklab, var(--refused) 40%, transparent);
+                background: color-mix(in oklab, var(--refused) 12%, transparent); }
+
+/* Facts: label and value, aligned, no table needed. */
+.facts { display: grid; grid-template-columns: minmax(9rem, max-content) 1fr; gap: .3rem 1.25rem;
+         margin: .25rem 0 0; }
+.facts dt { color: var(--muted); font-size: .85rem; }
+.facts dd { margin: 0; font-family: var(--mono); font-size: .85rem;
+            font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+table { border-collapse: collapse; width: 100%; margin: .5rem 0 1rem; }
+th, td { text-align: left; padding: .45rem .7rem .45rem 0; vertical-align: top; }
+th { font-weight: 600; color: var(--muted); width: 16rem; font-size: .85rem; }
+ul { margin: .25rem 0 1rem; padding-left: 1.2rem; }
+li { margin: .2rem 0; }
+footer { margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule);
+         color: var(--faint); font-size: .82rem; }
+/* The list has seven narrow columns, not two wide ones, so it undoes the label width above. */
+table.list th { width: auto; font-size: .75rem; letter-spacing: .05em; text-transform: uppercase;
+                color: var(--faint); }
+table.list td { border-top: 1px solid var(--rule); font-size: .875rem; }
+table.list tr:hover td { background: color-mix(in oklab, var(--ink) 4%, transparent); }
+/* Captured output is somebody else's, and some of it has 300-character lines. It wraps rather
+   than scrolls, because a horizontal scrollbar inside a collapsed block hides evidence. */
+pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .5rem 0;
+      font: .82rem/1.5 var(--mono); background: color-mix(in oklab, var(--ink) 4%, transparent);
+      border-radius: var(--r-chip); padding: .7rem .85rem; }
+details { margin: .4rem 0 .7rem; }
+summary { cursor: pointer; color: var(--muted); font-size: .875rem; }
+summary:hover { color: var(--ink); }
+details > pre { border-left: 2px solid var(--rule); }
+code { font-family: var(--mono); font-size: .9em; }
+</style></head><body>
+<h1>hullwork</h1><p class="sub">Read-only. Nothing here changes anything. <a href="projects.html">Projects</a> · <a href="items.html">Items and their evidence</a></p><h2>Now</h2><div class="band"><span class="chip c-working">working</span> <strong>AssertionError: expected 2 rows, got 0 in reconcile_batch</strong> <span class="faint">· 2 waiting behind it</span><ul class="phases"><li class="phase live">baseline</li><li class="phase">reproduce</li><li class="phase">RED</li><li class="phase">fix</li><li class="phase">GREEN</li><li class="phase">lint</li></ul></div><h2>Where everything is</h2><div class="board"><div class="col"><h4>Arrived</h4><span class="count c-idle">2</span><span class="age">oldest 40m</span></div><div class="col owed"><h4>Waiting on you</h4><span class="count c-waiting">3</span><span class="age">oldest 2d</span></div><div class="col"><h4>Queued</h4><span class="count c-idle">2</span><span class="age">oldest 1h</span></div><div class="col"><h4>Working</h4><span class="count c-working">1</span><span class="age">oldest 25m</span></div><div class="col owed"><h4>Waiting on review</h4><span class="count c-waiting">1</span><span class="age">oldest 33m</span></div><div class="col"><h4>Closed</h4><span class="count c-passed">3</span><span class="age">oldest 2d</span></div></div><h2>What does not add up</h2><div class="band quiet"><span class="chip c-passed">nothing disagrees</span></div><h2>State</h2><table><tr><th>state</th><td>ready</td></tr><tr><th>version</th><td>0.1.0a1</td></tr><tr><th>forge</th><td>ok</td></tr><tr><th>error reporting (this service)</th><td>on</td></tr><tr><th>error reporting (dispatcher)</th><td>not recorded</td></tr><tr><th>sweep</th><td>every 60s</td></tr><tr><th>backlog</th><td>0 item(s) owed an issue</td></tr><tr><th>deliveries carrying an error</th><td>0</td></tr><tr><th>dispatcher</th><td>none has ever run on this instance</td></tr><tr><th>merged fixes</th><td>0 merged · 0 held the 14-day window · 0 came back</td></tr></table><h2>Attempts</h2><ul><li>1 attempt(s) got a fair try: 1 opened a pull request</li><li>0 of those 1 pull request(s) were merged</li></ul><h2>What they cost</h2><ul><li>- 1 attempt(s) with model traffic on the wire</li><li>context served: 1,807 tokens</li><li>no prices configured, so no money is reported (HULLWORK_MODEL_PRICE_INPUT and its three siblings)</li><li>1 of them recorded no cached context (sealed before it was measured, or a provider that does not cache), so any figure above is a floor</li><li>the wire reported no cache read, no cache write on at least one attempt, so a ceiling in tokens could not count it — the floor above is that much further below the truth</li><li>median 12m 0s, slowest 12m 0s</li></ul><h2>What reviewers did</h2><ul><li>0 merged by a human</li><li>1 waiting for a human — this is the review debt, and it is the number that decides whether any of the above reduced maintenance</li></ul><h2>Which half holds what</h2><p>This service holds a credential that can file issues and read code, and <strong>listens</strong> — the error tracker has to reach it. The half that can write code holds a different credential and <strong>listens on nothing</strong>: no port, no route, nothing to reach. That is DR-0009, and it is why a page can exist here at all.</p><p class="sub">Whether this instance's ingest credential can push is answered by <code>hullwork status</code>, which asks the forge a question whose successful form does not exist. It is not asked from this page: a render must not spend somebody's forge quota.</p><h2>What this instance allows</h2><p>cost ceiling per attempt: none set · attempts at once: 1, by design — one dispatcher holds the lease and a turn of its loop is a whole attempt, so more means a second instance with its own HULLWORK_INSTANCE · models that may answer: claude-opus-5 only.</p>
+<footer>Hullwork 0.1.0a1 — read-only. <strong>This URL is the credential</strong>: anyone who has it can read everything on this page. Rotate it with <code>hullwork page-token --rotate</code>.</footer>
+</body></html>

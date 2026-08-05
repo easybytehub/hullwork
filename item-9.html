@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>Hullwork — item 9</title><style>
+:root {
+  color-scheme: light dark;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --ink:    light-dark(#15171c, #e7e9ee);
+  --muted:  light-dark(#5d6470, #98a0ad);
+  --faint:  light-dark(#868d99, #6f7783);
+  --rule:   light-dark(#e2e5ea, #262a31);
+  --canvas: light-dark(#fcfcfd, #0f1115);
+  --raise:  light-dark(#ffffff, #16191f);
+
+  --waiting: light-dark(#8a5a00, #e3a83a);
+  --working: light-dark(#1b5fb0, #6aa9f2);
+  --passed:  light-dark(#12693a, #4fb37d);
+  --refused: light-dark(#a32f26, #ec7d70);
+  --human:   light-dark(#5a3ea8, #ab8df0);
+
+  --r-card: 10px;
+  --r-chip: 6px;
+}
+* { box-sizing: border-box; }
+body {
+  font: 400 15px/1.6 var(--sans);
+  color: var(--ink); background: var(--canvas);
+  margin: 0 auto; max-width: 78rem; padding: 2.5rem 1.5rem 5rem;
+  -webkit-font-smoothing: antialiased;
+}
+h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: -.02em; margin: 0 0 .3rem; }
+h2 { font-size: .78rem; font-weight: 650; letter-spacing: .07em; text-transform: uppercase;
+     color: var(--faint); margin: 2.5rem 0 .75rem; }
+h3 { font-size: 1rem; font-weight: 600; letter-spacing: -.01em; margin: 0 0 .4rem; }
+a { color: inherit; text-underline-offset: 3px; text-decoration-color: var(--rule); }
+a:hover { text-decoration-color: currentColor; }
+.sub { color: var(--muted); margin: 0 0 2rem; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.faint { color: var(--faint); }
+.bad { font-weight: 650; color: var(--refused); }
+
+/* A band is the unit of the daily page: hairline, soft radius, and in light mode the faintest
+   lift so it reads as a surface rather than as a box drawn on the page. */
+.band { background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r-card);
+        padding: 1.1rem 1.25rem; margin: 0 0 1rem;
+        box-shadow: light-dark(0 1px 2px rgb(16 18 28 / .04), none); }
+.band.quiet { background: none; box-shadow: none; }
+
+/* State chips. The tint is derived from the semantic colour so a new state needs one variable,
+   and the word inside is never optional. */
+.chip { display: inline-flex; align-items: center; gap: .4rem; font: 600 .75rem/1 var(--sans);
+        letter-spacing: .01em; padding: .35rem .55rem; border-radius: var(--r-chip);
+        border: 1px solid color-mix(in oklab, var(--c, var(--muted)) 30%, transparent);
+        background: color-mix(in oklab, var(--c, var(--muted)) 12%, transparent);
+        color: var(--c, var(--muted)); white-space: nowrap; }
+.chip::before { content: ""; width: .4rem; height: .4rem; border-radius: 50%;
+                background: currentColor; flex: none; }
+.c-waiting { --c: var(--waiting); } .c-working { --c: var(--working); }
+.c-passed  { --c: var(--passed);  } .c-refused { --c: var(--refused); }
+.c-human   { --c: var(--human);   } .c-idle    { --c: var(--faint);   }
+
+/* The board: one column per group, wrapping down on a narrow screen rather than scrolling out. */
+.board { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
+.col { background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r-card);
+       padding: .85rem .9rem; min-height: 6.5rem; }
+.col h4 { font: 650 .72rem/1 var(--sans); letter-spacing: .06em; text-transform: uppercase;
+          color: var(--faint); margin: 0 0 .6rem; }
+.count { font: 650 1.75rem/1 var(--mono); font-variant-numeric: tabular-nums;
+         letter-spacing: -.03em; color: var(--c, var(--ink)); }
+.count.zero { color: var(--faint); font-weight: 400; }
+/* A tinted number is still a number: the column heading above it carries the meaning. */
+.age { display: block; font-size: .78rem; color: var(--muted); margin-top: .35rem; }
+.col.owed { border-color: color-mix(in oklab, var(--waiting) 45%, var(--rule)); }
+
+/* The six phases of the attempt in flight. */
+.phases { display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0 0;
+          padding: 0; list-style: none; }
+.phase { font: 500 .78rem/1 var(--mono); padding: .4rem .6rem; border-radius: var(--r-chip);
+         border: 1px solid var(--rule); color: var(--faint); }
+.phase.done { color: var(--passed);
+              border-color: color-mix(in oklab, var(--passed) 35%, transparent);
+              background: color-mix(in oklab, var(--passed) 10%, transparent); }
+.phase.live { color: var(--working);
+              border-color: color-mix(in oklab, var(--working) 45%, transparent);
+              background: color-mix(in oklab, var(--working) 12%, transparent); }
+.phase.failed { color: var(--refused);
+                border-color: color-mix(in oklab, var(--refused) 40%, transparent);
+                background: color-mix(in oklab, var(--refused) 12%, transparent); }
+
+/* Facts: label and value, aligned, no table needed. */
+.facts { display: grid; grid-template-columns: minmax(9rem, max-content) 1fr; gap: .3rem 1.25rem;
+         margin: .25rem 0 0; }
+.facts dt { color: var(--muted); font-size: .85rem; }
+.facts dd { margin: 0; font-family: var(--mono); font-size: .85rem;
+            font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+table { border-collapse: collapse; width: 100%; margin: .5rem 0 1rem; }
+th, td { text-align: left; padding: .45rem .7rem .45rem 0; vertical-align: top; }
+th { font-weight: 600; color: var(--muted); width: 16rem; font-size: .85rem; }
+ul { margin: .25rem 0 1rem; padding-left: 1.2rem; }
+li { margin: .2rem 0; }
+footer { margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule);
+         color: var(--faint); font-size: .82rem; }
+/* The list has seven narrow columns, not two wide ones, so it undoes the label width above. */
+table.list th { width: auto; font-size: .75rem; letter-spacing: .05em; text-transform: uppercase;
+                color: var(--faint); }
+table.list td { border-top: 1px solid var(--rule); font-size: .875rem; }
+table.list tr:hover td { background: color-mix(in oklab, var(--ink) 4%, transparent); }
+/* Captured output is somebody else's, and some of it has 300-character lines. It wraps rather
+   than scrolls, because a horizontal scrollbar inside a collapsed block hides evidence. */
+pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .5rem 0;
+      font: .82rem/1.5 var(--mono); background: color-mix(in oklab, var(--ink) 4%, transparent);
+      border-radius: var(--r-chip); padding: .7rem .85rem; }
+details { margin: .4rem 0 .7rem; }
+summary { cursor: pointer; color: var(--muted); font-size: .875rem; }
+summary:hover { color: var(--ink); }
+details > pre { border-left: 2px solid var(--rule); }
+code { font-family: var(--mono); font-size: .9em; }
+</style></head><body>
+<h1>#9 SandboxError: &#x27;/nonexistent/docker&#x27; is not on PATH</h1><p class="sub"><a href="items.html">All items</a> · <a href="instance.html">Instance</a></p><table><tr><th>project</th><td>checkout-api</td></tr><tr><th>state</th><td>pr-open</td></tr><tr><th>lane</th><td>green — the frame points inside a path this instance lets an agent touch</td></tr><tr><th>kind</th><td>bug</td></tr><tr><th>seen</th><td>6 time(s), first 2026-08-05 11:47:12.761934+00:00, last 2026-08-05 12:17:12.761934+00:00</td></tr><tr><th>issue</th><td><a href="https://forge.example/acme/checkout-api/issues/133" rel="noreferrer noopener">#133</a></td></tr><tr><th>in the tracker</th><td><a href="https://tracker.example/issues/9033" rel="noreferrer noopener">https://tracker.example/issues/9033</a></td></tr></table><p class="sub">Two parts of the published artefact are missing here, and they are missing from the database rather than from this page: the agent&#x27;s own account of what it did, and the brief it was given. Neither is stored (item 079). Everything else below is assembled from the recorded steps by the same function that wrote the pull request — which is why the agent&#x27;s prose was never load-bearing for a merge decision in the first place.</p><h2>Attempt 1 — pr-open, reached <code>publish</code></h2><p class="sub">Started 2026-08-05 12:05:12.761934+00:00 · pull request #10</p><p class="sub">model <code>claude-opus-5</code> · via <code>https://api.anthropic.com</code> · 1,807 tokens served · took 12m 0s</p><pre>**A test that failed against unmodified code passes with this change applied.** Both runs are below, with the commands and their exit codes.
+
+a test that failed against unmodified code passes with the change applied — 2 test(s) failed with the candidate added, and the 904 test(s) that passed before still pass — a clean reproduction.
+
+Closes #133
+
+### What was checked
+
+| | |
+|---|---|
+| Reproduced by | this runner does not name its failures in a shape Hullwork reads — the counts below are what can be said |
+| Before the fix | exit `1` as it must — `2 failed, 904 passed in 57.02s` |
+| After the fix | exit `0` as it must — `906 passed in 57.71s` |
+| The suite before any change | exit `0` as it must — `904 passed in 61.26s (0:01:01)` |
+
+### Provenance
+
+| | |
+|---|---|
+| Gates ran against | `586e4d3d455ba70352a9a1771555b9cf981aa87f` |
+| Production was running | `0.1.0.dev0` |
+| Sandbox image | `hullwork-sandbox:d85c07bf95a5` |
+| Model that answered | `claude-opus-5` |
+| Endpoint | `https://api.anthropic.com` |
+| Declared precision | `undisclosed` |
+| Context served | 1,807 tokens (whether any of it was cached was not reported) |
+| Charged as | 1,807 in, 36,559 out |
+| Cost | not priced on this instance |
+| Took | 12m 0s |
+
+### What ran
+
+| Step | Command | Exit | Took | Environment |
+|---|---|---|---|---|
+| `baseline` | `pytest` | `0` | 63.2s | — |
+| `reproduce` | `/hullwork-harness/bin/hullwork-agent --phase reproduce` | `0` | 378.1s | — |
+| `red-gate` | `pytest` | `1` | 59.0s | — |
+| `fix` | `/hullwork-harness/bin/hullwork-agent --phase fix` | `0` | 172.1s | — |
+| `green-gate` | `pytest` | `0` | 60.0s | — |
+| `lint-gate` | `ruff check . &amp;&amp; mypy .` | `0` | 18.9s | — |</pre><details><summary>&lt;code&gt;baseline&lt;/code&gt; output — 904 passed in 61.26s (0:01:01)</summary><pre>```text
+904 passed in 61.26s (0:01:01)
+```</pre></details><details><summary>&lt;code&gt;reproduce&lt;/code&gt; output — the agent&#x27;s own transcript, as its harness printed it</summary><pre>```text
+I wrote tests/test_regression.py. I could not execute it — the Bash tool is unavailable in this environment, so the &quot;confirm it fails&quot; and &quot;run ruff/mypy&quot; steps are unverified.
+```</pre></details><details><summary>&lt;code&gt;red-gate&lt;/code&gt; output — 2 failed, 904 passed in 57.02s</summary><pre>```text
+2 failed, 904 passed in 57.02s
+```</pre></details><details><summary>&lt;code&gt;fix&lt;/code&gt; output — the agent&#x27;s own transcript, as its harness printed it</summary><pre>```text
+Routed the first teardown call through _quietly, like every other call in the method.
+```</pre></details><details><summary>&lt;code&gt;green-gate&lt;/code&gt; output — 906 passed in 57.71s</summary><pre>```text
+906 passed in 57.71s
+```</pre></details><details><summary>&lt;code&gt;lint-gate&lt;/code&gt; output</summary><pre>```text
+All checks passed!
+Success: no issues found in 171 source files
+```</pre></details><pre>
+---
+
+Opened by Hullwork as a **draft**. Nobody merges this but you.</pre>
+<footer>Hullwork 0.1.0a1 — read-only. <strong>This URL is the credential</strong>: anyone who has it can read everything on this page. Rotate it with <code>hullwork page-token --rotate</code>.</footer>
+</body></html>

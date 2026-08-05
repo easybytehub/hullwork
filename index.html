@@ -1,0 +1,67 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hullwork — a rendered snapshot of the read-only page</title>
+<meta name="robots" content="noindex">
+<style>
+  :root {
+    color-scheme: light dark;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --ink: light-dark(#15171c, #e7e9ee);
+    --muted: light-dark(#5d6470, #98a0ad);
+    --rule: light-dark(#e2e5ea, #262a31);
+    --canvas: light-dark(#fcfcfd, #0f1115);
+    --raise: light-dark(#ffffff, #16191f);
+    --waiting: light-dark(#8a5a00, #e3a83a);
+  }
+  html { background: var(--canvas); }
+  body { font-family: var(--sans); color: var(--ink); max-width: 46rem; margin: 0 auto;
+         padding: 3rem 1.25rem 5rem; line-height: 1.55; }
+  h1 { font-size: 1.6rem; letter-spacing: -0.02em; margin: 0 0 0.25rem; }
+  p.lede { color: var(--muted); margin: 0 0 2rem; }
+  .warn { border: 1px solid var(--rule); border-left: 3px solid var(--waiting); background: var(--raise);
+          padding: 0.9rem 1.1rem; margin: 0 0 2rem; }
+  .warn strong { color: var(--waiting); }
+  ul.views { list-style: none; padding: 0; margin: 0 0 2.5rem; }
+  ul.views li { border-bottom: 1px solid var(--rule); padding: 0.85rem 0; }
+  ul.views a { font-family: var(--mono); font-size: 0.95rem; color: inherit; text-decoration: none;
+               border-bottom: 1px solid var(--rule); }
+  ul.views a:hover { border-bottom-color: currentColor; }
+  ul.views span { display: block; color: var(--muted); font-size: 0.9rem; margin-top: 0.2rem; }
+  footer { color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--rule); padding-top: 1.25rem; }
+  a { color: inherit; }
+</style>
+
+<h1>Hullwork, the page you would open every day</h1>
+<p class="lede">The four you would actually open, plus the two behind <a href="projects.html">projects</a> —
+   rendered by the same functions a running instance serves them with.</p>
+
+<div class="warn">
+  <p><strong>This is a snapshot, not a live instance.</strong> Nothing here is running, no error is being
+  triaged, and the numbers do not change while you look at them.</p>
+  <p>The <em>data</em> is invented — <code>acme/checkout-api</code> does not exist — because a public
+  demo should not carry another project's issue titles. The layout, the wording and every field are the
+  real ones: these files come out of <code>hullwork.page</code>, not out of a design tool.</p>
+</div>
+
+<ul class="views">
+  <li><a href="instance.html">instance</a>
+    <span>The daily read. What is running, what is stuck behind it, what is waiting on you — and, below
+    the fold, what an evaluator wants: the credential split, the seal, the cost.</span></li>
+  <li><a href="items.html">items</a>
+    <span>Everything this instance knows about, with its lane and how long it has been where it is.</span></li>
+  <li><a href="item-9.html">one item, with its evidence</a>
+    <span>The interesting one: an attempt that reached a pull request, its six phases with exit codes,
+    the red gate failing as it must, and the provenance seal naming the model that answered.</span></li>
+  <li><a href="projects.html">projects</a>
+    <span>Two repositories on one instance, each with the manifest it was registered from.</span></li>
+</ul>
+
+<footer>
+  <p>There is nothing to log in to. On a real instance the URL carries a bearer token and that URL
+  <em>is</em> the credential — mint one with <code>hullwork page-token</code>, and everything without it
+  gets the same 404 an unknown path gets.</p>
+  <p><a href="https://github.com/easybytehub/hullwork">The repository</a> · pre-alpha, and
+  <code>docs/status.md</code> says exactly how far that goes.</p>
+</footer>
