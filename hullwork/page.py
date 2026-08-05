@@ -288,6 +288,22 @@ code { font-family: var(--mono); font-size: .9em; }
 """
 
 
+#: The mark, as the interface document specifies it: a single glyph, `▚`, and no binary asset.
+#:
+#: **Inline rather than a file**, for the reason that document gives — a product that ships as a
+#: wheel and renders one inlined stylesheet should not acquire a binary dependency for its own
+#: name. A `data:` URI keeps the promise below: no external asset, and one request per page.
+#:
+#: Without this the daily page was a generic document icon in a browser tab, which is where somebody
+#: with fifteen tabs open finds it. The glyph was decided and never served.
+_FAVICON = (
+    "data:image/svg+xml,"
+    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
+    "%3Ctext x='8' y='13' font-size='15' text-anchor='middle'"
+    "%20font-family='ui-monospace,monospace'%3E%E2%96%9A%3C/text%3E%3C/svg%3E"
+)
+
+
 def _document(title: str, body: str) -> str:
     """The whole page. No script, no external asset, one inlined stylesheet."""
     return (
@@ -295,6 +311,7 @@ def _document(title: str, body: str) -> str:
         '<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<meta name="referrer" content="no-referrer">'
+        f'<link rel="icon" href="{_FAVICON}">'
         f"<title>{_h(title)}</title><style>{_STYLE}</style></head><body>\n"
         f"{body}\n"
         "<footer>Hullwork "

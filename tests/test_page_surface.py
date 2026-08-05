@@ -460,3 +460,23 @@ def test_the_page_shows_money_when_the_operator_has_priced_it(
     body = client.get(f"/page/{token}/items/{item.id}").text
 
     assert "18.0000 USD" in body, "3 + 15 per million, on a million of each"
+
+
+def test_the_page_serves_the_mark_the_design_document_specifies() -> None:
+    """`▚`, inline, and no external asset. The glyph was decided and never served.
+
+    Two properties, and the second is why this is not a cosmetic test. The mark has to be
+    **there** — a browser tab showing a generic document icon is where somebody with fifteen tabs
+    open loses the page. And it has to be **inline**, because `_document`'s own docstring promises
+    "no external asset": a favicon file would make the page fetch something, which is a claim this
+    project makes about itself in `SECURITY.md` as well as in that docstring.
+    """
+    html = page._document("anything", "<p>body</p>")
+
+    assert 'rel="icon"' in html, "the interface document specifies a favicon glyph"
+    assert "data:image/svg+xml," in html, "inline, or the page fetches an asset it promises not to"
+    assert "%E2%96%9A" in html, "the glyph is ▚, not a letter or a picture"
+    # Not "no `http://` anywhere in the head": the SVG namespace is a URI and is not a fetch, which
+    # this assertion learned the hard way. What matters is that nothing is *requested*.
+    head = html.split("<body>")[0]
+    assert 'href="http' not in head and 'src="http' not in head, "the head must fetch nothing"

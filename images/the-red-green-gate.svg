@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 268" width="760" height="268"
+     role="img" aria-labelledby="title desc">
+  <title id="title">The red/green gate: six phases and the exit code each one owes</title>
+  <desc id="desc">Six phases run in order. The baseline must pass, or the attempt never starts. The
+    agent writes a failing test and the red gate must exit 1 — a test that passes before the change
+    proves nothing, so an attempt whose red gate comes back green is thrown away. The agent then
+    writes the fix, and the green and lint gates must pass. Only then is a draft pull request opened,
+    and a person merges it. The counts are from a real attempt: 904 passed, then 2 failed with the new
+    test and no fix, then 906 passed.</desc>
+
+  <!-- **Readable on a light or a dark page.** GitHub renders this over whichever the reader chose, and
+       a diagram that is invisible in dark mode is worse than no diagram. Light is the default rather
+       than the override, so a viewer that ignores the media query still gets a legible card.
+
+       Red here is correct where it would be wrong in the other diagram: this *is* a failing test, and
+       failing is what the phase owes. Every coloured thing also says it in words. -->
+  <style>
+    .bg    { fill: #fcfcfd; }
+    .rule  { stroke: #9aa2ae; fill: none; stroke-width: 1.25; }
+    .ink   { fill: #15171c; }
+    .muted { fill: #5d6470; }
+    .bad   { fill: #a32f26; }
+    .ok    { fill: #12693a; }
+    .badS  { stroke: #a32f26; fill: none; stroke-width: 2; }
+    .okS   { stroke: #12693a; fill: none; stroke-width: 2; }
+    .arrow { fill: #9aa2ae; }
+    text   { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .mono  { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+    @media (prefers-color-scheme: dark) {
+      .bg    { fill: #0f1115; }
+      .rule  { stroke: #3a4048; }
+      .ink   { fill: #e7e9ee; }
+      .muted { fill: #98a0ad; }
+      .bad   { fill: #ec7d70; }
+      .ok    { fill: #4fb37d; }
+      .badS  { stroke: #ec7d70; }
+      .okS   { stroke: #4fb37d; }
+      .arrow { fill: #6f7783; }
+    }
+  </style>
+
+  <rect class="bg" x="0" y="0" width="760" height="268"/>
+
+  <g class="muted" font-size="13" letter-spacing="0.08em">
+    <text x="12" y="24">SIX PHASES, IN ORDER — AND THE EXIT CODE EACH ONE OWES</text>
+  </g>
+
+  <!-- The phases. Colour only on the three gates, because only they have a verdict. -->
+  <g class="rule">
+    <rect x="12" y="44" width="104" height="58" rx="4"/>
+    <rect x="128" y="44" width="104" height="58" rx="4"/>
+    <rect x="244" y="44" width="104" height="58" rx="4" class="badS"/>
+    <rect x="360" y="44" width="104" height="58" rx="4"/>
+    <rect x="476" y="44" width="104" height="58" rx="4" class="okS"/>
+    <rect x="592" y="44" width="104" height="58" rx="4" class="okS"/>
+  </g>
+
+  <g class="ink mono" font-size="13.5">
+    <text x="64" y="68" text-anchor="middle">baseline</text>
+    <text x="180" y="68" text-anchor="middle">reproduce</text>
+    <text x="296" y="68" text-anchor="middle" class="bad" font-weight="600">red-gate</text>
+    <text x="412" y="68" text-anchor="middle">fix</text>
+    <text x="528" y="68" text-anchor="middle" class="ok" font-weight="600">green-gate</text>
+    <text x="644" y="68" text-anchor="middle" class="ok" font-weight="600">lint-gate</text>
+  </g>
+
+  <g font-size="12.5" class="muted">
+    <text x="64" y="88" text-anchor="middle">must exit 0</text>
+    <text x="180" y="88" text-anchor="middle">agent writes a test</text>
+    <text x="296" y="88" text-anchor="middle" class="bad" font-weight="600">MUST exit 1</text>
+    <text x="412" y="88" text-anchor="middle">agent writes the fix</text>
+    <text x="528" y="88" text-anchor="middle" class="ok" font-weight="600">must exit 0</text>
+    <text x="644" y="88" text-anchor="middle" class="ok" font-weight="600">must exit 0</text>
+  </g>
+
+  <g class="arrow">
+    <path d="M116 73 L124 73" stroke-width="1.25"/><path d="M120 69 L128 73 L120 77" stroke="none"/>
+    <path d="M232 73 L240 73"/><path d="M236 69 L244 73 L236 77" stroke="none"/>
+    <path d="M348 73 L356 73"/><path d="M352 69 L360 73 L352 77" stroke="none"/>
+    <path d="M464 73 L472 73"/><path d="M468 69 L476 73 L468 77" stroke="none"/>
+    <path d="M580 73 L588 73"/><path d="M584 69 L592 73 L584 77" stroke="none"/>
+  </g>
+
+  <!-- Why exit 1 is the required outcome, said in words rather than implied by the colour. -->
+  <text x="296" y="128" text-anchor="middle" font-size="13" class="bad">
+    a test that passes before the change proves nothing
+  </text>
+  <text x="296" y="146" text-anchor="middle" font-size="13" class="muted">
+    so an attempt whose red gate comes back green is thrown away
+  </text>
+
+  <!-- The counts, from a real attempt rather than an illustration. -->
+  <g class="rule"><rect x="12" y="168" width="440" height="84" rx="4"/></g>
+  <g font-size="13" class="ink">
+    <text x="28" y="188" font-size="12.5" letter-spacing="0.06em" class="muted">MEASURED ON ONE REAL ATTEMPT</text>
+    <g class="mono">
+      <text x="28" y="208">904 passed</text>
+      <text x="28" y="226" class="bad">2 failed</text>
+      <text x="28" y="244" class="ok">906 passed</text>
+    </g>
+    <g font-size="12.5" class="muted">
+      <text x="132" y="208">the suite, untouched</text>
+      <text x="132" y="226">the new test and no fix — exit 1, as required</text>
+      <text x="132" y="244">the fix applied, and the 904 still pass</text>
+    </g>
+  </g>
+
+  <!-- What the gates buy, and who still decides. -->
+  <g class="rule"><rect x="476" y="168" width="272" height="84" rx="4"/></g>
+  <g font-size="13" class="ink">
+    <text x="492" y="188" font-size="12.5" letter-spacing="0.06em" class="muted">ONLY THEN</text>
+    <text x="492" y="210" class="mono">a draft pull request</text>
+    <text x="492" y="232">and a person merges it. Or does not.</text>
+  </g>
+</svg>

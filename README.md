@@ -44,14 +44,13 @@ The two rows worth skipping ahead for. First, the agent said this about its own 
 
 Second, what happened next, because nothing here takes an agent's word for anything:
 
-| | |
-|---|---|
-| the suite, untouched | **904 passed** — green, so the attempt was allowed to start |
-| the new test, no fix | **2 failed**, 904 passed — exit `1`, which is the *required* outcome |
-| the fix applied | **906 passed** — and the 904 that passed before still pass |
+![Six phases in order with the exit code each one owes: baseline must exit 0, the red gate MUST exit 1,
+the green and lint gates must exit 0. Measured on that attempt: 904 passed untouched, 2 failed with the
+new test and no fix, 906 passed with the fix applied. Only then a draft pull request, and a person
+merges it or does not.](images/the-red-green-gate.svg)
 
-A test that passes before the change proves nothing, so an attempt whose red gate comes back green is
-thrown away (DR-0003). The seal on that attempt says
+The agent could not run its own test and it did not matter, because the gates decide and they run
+outside its reach (DR-0003). The seal on that attempt says
 `"models_served": ["claude-opus-5"]` because that is what the responses on the wire said — not because
 anything was configured to claim it.
 
@@ -184,9 +183,14 @@ failure, and anything you would not let a stranger open a draft pull request abo
 
 ## The two properties everything else rests on
 
-**The two halves hold different credentials, and that is the product.** The half that answers webhooks —
-the one an attacker can reach — cannot push, and refuses to start if it finds a credential that can. The
-half that can push listens on nothing: no port, no route, nothing to reach
+**The two halves hold different credentials, and that is the product.**
+
+![The receiver answers webhooks and holds a token that files issues; it cannot push code, guaranteed,
+and refuses to start if it finds a credential that can. The dispatcher holds the token that pushes one
+branch and listens on nothing — no port, no route, nothing to reach. They never call each other: the
+only thing they share is one database.](images/the-credential-split.svg)
+
+The half an attacker can reach cannot push. The half that can push cannot be reached
 (DR-0009).
 
 **Which model answered is measured, not declared.** Every request passes through Hullwork's own
