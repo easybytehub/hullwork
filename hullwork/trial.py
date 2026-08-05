@@ -235,6 +235,26 @@ def run(
                 f"ships with Hullwork."
             ) from exc
 
+    # **And the base image, for the same reason and on the same evidence.** Item 048's comment above
+    # says the refusal "existed and happened in the most expensive place available"; measured on
+    # 2026-08-05 against the published wheel, `runtime.base: distroless` did worse than that — it
+    # spent minutes building and then raised `ImageBuildError` at an operator as a **traceback**,
+    # carrying the message `BaseFacts` itself calls inscrutable. `projects add` has refused this
+    # since item 108. This path had no way to reach the sentence.
+    #
+    # Before the sandbox, before the session, before anything is built: the whole point is that the
+    # refusal costs nothing. A daemon that cannot be asked returns no refusal rather than a guess,
+    # which is item 105's rule and why this cannot be a `try/except` around the build.
+    if manifest.runtime is not None:
+        from hullwork.sandbox.image import why_it_cannot_host_a_phase
+
+        # `pull=True` here and nowhere else: this command is about to build an image, which pulls
+        # anyway, so fetching to answer the question costs nothing and is the difference between a
+        # sentence and a traceback. `projects add` must not fetch, and does not.
+        refusal, _ = why_it_cannot_host_a_phase(manifest.runtime.base, pull=True)
+        if refusal:
+            raise work.WiringError(refusal)
+
     session = ephemeral_session()
     project, item = stage(session, manifest, trace, repo=checkout.name)
     if item.state is ItemState.WAITING_APPROVAL and approve:

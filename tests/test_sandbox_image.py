@@ -17,6 +17,7 @@ from hullwork.sandbox.image import (
     compare_with_production,
     dockerfile,
     image_tag,
+    why_it_cannot_host_a_phase,
 )
 
 DEPS = {"pyproject.toml": b"[project]\nname='x'\n", "uv.lock": b"version = 1\n"}
@@ -492,3 +493,39 @@ def test_no_packages_means_no_installer_line_at_all() -> None:
 
     assert "command -v" not in recipe
     assert "apk" not in recipe
+
+
+def test_a_build_failure_shows_what_docker_said() -> None:
+    """`ImageBuildError`'s docstring promised a diagnosis and `str()` threw it away.
+
+    `SandboxError` — the class next door, identical `__init__`, same promise — was given this on
+    2026-08-04 after a stranger lost ten minutes to a message that hid Docker's own explanation.
+    This one was not, and the omission only became visible on 2026-08-05 when these errors started
+    being rendered as sentences at the CLI boundary instead of as tracebacks: `could not build
+    the sandbox image: base 'no-such-image'` never said the image does not exist, though Docker
+    had.
+
+    The tail, not the whole: the cause of a failed `docker` call is at the end.
+    """
+    docker_said = "\n".join(f"step {n}" for n in range(40)) + "\npull access denied"
+
+    rendered = str(ImageBuildError("could not build the sandbox image", docker_said))
+
+    assert rendered.startswith("could not build the sandbox image")
+    assert "pull access denied" in rendered, "the diagnosis was in the output and must survive"
+    assert "step 0" not in rendered, "the tail, at the 25-line convention, not forty lines of noise"
+    assert str(ImageBuildError("alone")) == "alone", "and no trailing newline with no output"
+
+
+def test_the_verdict_on_a_base_image_is_one_of_three_answers() -> None:
+    """Refusal, or nothing, or *not checked* — and the third is what keeps this honest.
+
+    Docker is unreachable from the receiver by design (DR-0009), so a check that could not tell
+    *wrong* from *not asked* would refuse every registration made from the right place. Asserted
+    with no daemon at all, which is that case exactly.
+    """
+    refusal, note = why_it_cannot_host_a_phase("python:3.12-slim", docker="docker-that-is-not-here")
+
+    assert refusal is None, "an unanswerable question is not a refusal"
+    assert "Not checked here" in note
+    assert "no Docker client on PATH" in note, "and it says which of the reasons it was"

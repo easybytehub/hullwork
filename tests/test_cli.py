@@ -7,6 +7,7 @@ process startup per assertion, and failures point at a line instead of at a shel
 import argparse
 import base64
 import io
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -766,3 +767,57 @@ def test_the_version_is_reachable_without_a_configured_instance(
 
     assert exited.value.code == 0, "asking the version is not an error"
     assert __version__ in capsys.readouterr().out
+
+
+def test_the_boundary_renders_every_declared_sandbox_failure_as_a_sentence(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`main`'s docstring says it "never raises at an operator", and on 2026-08-05 it did.
+
+    Measured against the published wheel: a base image Docker cannot resolve reaches `image.build`,
+    which raises `ImageBuildError`, which nothing caught — so a stranger's first five minutes
+    ended in eleven frames of Python. Every one of the sandbox's declared failures now prints as a
+    sentence and exits 1.
+
+    Walked over the tuple rather than a list written here, so adding an error class to the boundary
+    is the only way to make this test cover it — and the test below makes adding it unavoidable.
+    """
+    from hullwork import cli as cli_module
+
+    for failure in cli_module.SANDBOX_FAILURES:
+        def explode(*_args: object, _failure: type[Exception] = failure, **_kwargs: object) -> int:
+            raise _failure("the sandbox said no")
+
+        monkeypatch.setattr(cli_module, "get_settings", explode)
+        code = main(["status"])
+        printed = capsys.readouterr().err
+
+        assert code == 1, f"{failure.__name__} must exit 1"
+        assert printed.startswith("error: "), f"{failure.__name__} printed {printed!r}"
+        assert "the sandbox said no" in printed
+        assert "Traceback" not in printed
+
+
+def test_no_sandbox_error_can_arrive_at_the_boundary_unhandled() -> None:
+    """The drift guard, and the reason the first one arrived unhandled at all.
+
+    `ImageBuildError` existed for weeks, was raised on the busiest path, and was in no `except` at
+    all. A tuple written by hand goes stale the day somebody adds the seventh error class — so this
+    walks the package and asserts every `*Error` in it is handled.
+    """
+    import pkgutil
+
+    from hullwork import cli as cli_module
+    from hullwork import sandbox
+
+    handled = {failure.__name__ for failure in cli_module.SANDBOX_FAILURES}
+    declared: set[str] = set()
+    for module in pkgutil.iter_modules(sandbox.__path__):
+        source = (Path(sandbox.__path__[0]) / f"{module.name}.py").read_text(encoding="utf-8")
+        declared |= set(re.findall(r"^class (\w*Error)\(", source, re.M))
+
+    assert declared, "this test has lost its subject"
+    assert declared <= handled, (
+        f"declared in hullwork/sandbox/ and not rendered as a sentence at the boundary: "
+        f"{sorted(declared - handled)}"
+    )

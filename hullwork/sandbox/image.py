@@ -264,11 +264,29 @@ BUILD_SIZE_LIMIT_BYTES = 8 * 1024**3
 
 
 class ImageBuildError(RuntimeError):
-    """The sandbox image could not be built. Carries the output, because that is the diagnosis."""
+    """The sandbox image could not be built. Carries the output, because that is the diagnosis.
+
+    **And it threw that output away until 2026-08-05.** `SandboxError` — the class next door, with
+    an identical `__init__` and the same sentence in its docstring — was given a `__str__` that
+    shows the tail on 2026-08-04, after a stranger lost ten minutes to a message that hid Docker's
+    own explanation. This one was not, so the docstring promised a diagnosis `str()` discarded.
+
+    Found by rendering these errors as sentences at the CLI boundary, which made the omission
+    visible: `could not build the sandbox image: base 'no-such-image', install 'none', packages
+    none` never said that the image does not exist, though Docker had.
+
+    The tail rather than the whole, at the same 25-line convention: the cause of a failed `docker`
+    call is at the end, and a build's output is long enough to bury it.
+    """
 
     def __init__(self, message: str, output: str = "") -> None:
         super().__init__(message)
         self.output = output
+
+    def __str__(self) -> str:
+        message = super().__str__()
+        tail = "\n".join(self.output.strip().splitlines()[-25:])
+        return f"{message}\n{tail}" if tail else message
 
 
 @dataclass(frozen=True)
@@ -771,6 +789,65 @@ def host_architecture(docker: str = "docker") -> str | None:
         return None
     answered = _run([docker, "version", "--format", "{{.Server.Arch}}"], timeout=60)
     return (answered.stdout or "").strip() or None if answered.returncode == 0 else None
+
+
+def why_it_cannot_host_a_phase(
+    base: str, *, docker: str = "docker", pull: bool = False
+) -> tuple[str | None, str]:
+    """`(refusal, note)` — the sentence that refuses this base image, or `None` and a note.
+
+    **The sentences moved here because two doors needed them and only one had them.** `projects add`
+    and `projects refresh` refused a shell-less or wrong-architecture base; `hullwork try` did
+    not, and `try` is the door the README sends a stranger to first. Measured 2026-08-05 against
+    the published wheel: a manifest declaring `distroless` spent minutes building and then failed
+    with a **Python traceback** ending in *"could not build the sandbox image: base 'distroless',
+    install 'none', packages none"* — verbatim the inscrutable failure `BaseFacts` above says this
+    check exists to prevent.
+
+    That is the fourth time this shape has appeared: the refusal existed, correct and well worded,
+    on a path that could not reach it. Item 048 found it for the engine name, on this same
+    command, and the comment it left in `trial.run` describes today exactly.
+
+    **The architecture is read before the shell, and the order is a measured defect rather than
+    taste.** `arm64v8/alpine:3.20` on an amd64 host *has* a shell and the probe for one fails
+    anyway with `exec format error` — so reading the fields in the other order refuses an image for
+    a reason that is not true (item 105).
+
+    **"Not checked" is a third answer.** Docker is unreachable from the receiver by design, so a
+    check that could not tell *wrong* from *not asked* would refuse every registration made from the
+    right place. The note is for the caller to print; it is not a refusal.
+
+    **`pull` is the caller's decision, and the two callers differ on purpose.** `inspect_base`
+    explains why registration must not fetch: it made `projects add` a silent download of a few
+    hundred megabytes. But an image that is not on the host yet is `checked=False`, so on a fresh
+    machine this check refuses nothing at all — measured 2026-08-05, twice, against a real
+    `gcr.io/distroless/python3-debian12`, which reached the build and produced the traceback anyway.
+    `try` is *about to build*, which pulls regardless, so there it costs nothing and buys the
+    sentence. Registration still only reads.
+    """
+    facts = inspect_base(base, docker=docker, pull=pull)
+    if not facts.checked:
+        return None, (
+            f"Not checked here: whether {base} has a shell and matches this host's architecture — "
+            f"{facts.why_not}. The build where the dispatcher runs is what establishes both; a "
+            f"failure there will name whichever one it was."
+        )
+    host = host_architecture(docker)
+    if facts.architecture and host and facts.architecture != host:
+        return (
+            f"runtime.base: {base} is built for {facts.architecture} and this host runs "
+            f"{host}. The harness bundle is built per architecture, so a mismatch fails inside "
+            f"the sandbox with a misleading \"not found\" about the executable. Name an image "
+            f"for {host}, or run this instance on {facts.architecture}."
+        ), ""
+    if facts.has_shell is False:
+        return (
+            f"runtime.base: {base} has no shell, so it cannot host a phase. Every phase runs "
+            f"`sh -lc`, and the agent works by executing commands — so this is a permanent limit "
+            f"rather than a gap: a `distroless` or `scratch` image cannot be used. Name one with a "
+            f"shell, which any image your CI runs tests in already has."
+        ), ""
+    return None, ""
 
 
 def _refuse_an_image_that_fills_the_disk(

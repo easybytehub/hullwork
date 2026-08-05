@@ -64,8 +64,11 @@ from hullwork.models import (
     ItemState,
     Project,
 )
+from hullwork.sandbox.harness import BundleError
 from hullwork.sandbox.image import ImageBuildError
-from hullwork.sandbox.run import SandboxError
+from hullwork.sandbox.net import EgressError
+from hullwork.sandbox.run import SandboxError, UnsafePathError
+from hullwork.sandbox.services import ServiceError
 from hullwork.security import generate_token, hash_token
 from hullwork.states import IllegalTransitionError, transition
 from hullwork.telemetry import configure_error_reporting
@@ -320,55 +323,21 @@ def _the_image_must_be_able_to_host_a_phase(
 ) -> None:
     """Refuse a base image that cannot host a phase, and say which of the two it is. Item 108.
 
-    **Two preconditions, both measured as inscrutable failures.** An image with no shell dies at
-    the first `RUN` with a message about `useradd`, when every phase runs `sh -lc` and the harness
-    works by executing commands (item 059) — that one will never be fixable, because it is what
-    the harness *is*. An image for another architecture dies at run time with the same misleading
-    *"not found"* DR-0007 spends a boxed aside explaining for musl.
-
-    **And "not checked" is a third answer, not a refusal.** `projects add` is normally typed on the
-    receiver, which holds no Docker socket by design (DR-0009), so a check that could not tell an
-    unreachable daemon from a bad image would refuse every registration made from the right place.
-    Item 105's whole lesson: do not attribute a failure to a cause you did not establish.
+    **The sentences live in `sandbox.image` since 2026-08-05**, because `hullwork try` needed the
+    same refusal and could not import them from here — so it had none, and a `distroless` base got a
+    traceback after minutes of building instead of one line before spending anything. This is the
+    door that registers a project; `trial.run` is the other one, and both now read one verdict.
     """
     runtime = manifest.runtime
     if runtime is None:
         return
-    from hullwork.sandbox.image import host_architecture, inspect_base
+    from hullwork.sandbox.image import why_it_cannot_host_a_phase
 
-    facts = inspect_base(runtime.base)
-    if not facts.checked:
-        if out is not None:
-            print(
-                f"Not checked here: whether {runtime.base} has a shell and matches this host's "
-                f"architecture — {facts.why_not}. The build where the dispatcher runs is what "
-                f"establishes both; a failure there will name whichever one it was.",
-                file=out,
-            )
-        return
-    # **The architecture first, and the order is a measured defect rather than taste.** Asked on
-    # in production: `arm64v8/alpine:3.20` on an amd64 host *has* a shell — and the probe for one
-    # fails anyway, with `exec format error`. Read in the other order, the refusal said "has no
-    # shell" about an image whose shell is fine, which is item 105's defect exactly: a cause
-    # asserted rather than established. The architecture is a fact off the image; the shell is an
-    # inference from a command that ran, and an inference is only sound once the fact agrees.
-    host = host_architecture()
-    if facts.architecture and host and facts.architecture != host:
-        msg = (
-            f"runtime.base: {runtime.base} is built for {facts.architecture} and this host runs "
-            f"{host}. The harness bundle is built per architecture, so a mismatch fails inside the "
-            f"sandbox with a misleading \"not found\" about the executable. Name an image for "
-            f"{host}, or run this instance on {facts.architecture}."
-        )
-        raise CommandError(msg)
-    if facts.has_shell is False:
-        msg = (
-            f"runtime.base: {runtime.base} has no shell, so it cannot host a phase. Every phase "
-            f"runs `sh -lc`, and the agent works by executing commands — so this is a permanent "
-            f"limit rather than a gap: a `distroless` or `scratch` image cannot be used. Name one "
-            f"with a shell, which any image your CI runs tests in already has."
-        )
-        raise CommandError(msg)
+    refusal, note = why_it_cannot_host_a_phase(runtime.base)
+    if note and out is not None:
+        print(note, file=out)
+    if refusal:
+        raise CommandError(refusal)
 
 
 def _propose_entry(args: argparse.Namespace, settings: Settings, out: TextIO) -> int:
@@ -2912,6 +2881,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: The sandbox's declared failures, rendered as sentences at the boundary rather than as tracebacks.
+#: Bound to the package by a test, so a new one is covered on the day it is written.
+SANDBOX_FAILURES = (BundleError, EgressError, ImageBuildError, SandboxError, ServiceError,
+                    UnsafePathError)
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
     """Entry point. Returns an exit code and never raises at an operator."""
     args = build_parser().parse_args(argv)
@@ -2952,6 +2927,20 @@ def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
             result: int = args.func(args, session, settings, out)
             return result
     except CommandError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except SANDBOX_FAILURES as exc:
+        # **`main`'s own docstring says it "never raises at an operator", and it did.** Measured
+        # 2026-08-05 against the published wheel: a base image Docker cannot resolve reaches
+        # `image.build`, which raises `ImageBuildError`, which nothing caught — so a stranger's
+        # first five minutes ended in eleven frames of Python and the sentence *"could not build
+        # the sandbox image: base 'distroless', install 'none', packages none"*.
+        #
+        # These six are the sandbox's **declared** failures: what it says can go wrong. Rendering
+        # them as sentences is not the same as swallowing exceptions — an unexpected error is a bug
+        # and still gets its traceback, which is what a bug deserves. A test asserts that every
+        # `*Error` in `hullwork/sandbox/` is in this tuple, so the seventh one cannot arrive
+        # unhandled the way the first one did.
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except ConfigError as exc:
