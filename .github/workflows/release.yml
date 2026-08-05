@@ -76,7 +76,15 @@ jobs:
           # Both architectures: the sandbox image a project declares has to match the host's, and an
           # amd64-only publish quietly excludes every arm64 deployment.
           docker buildx create --use --name release
-          docker buildx build --platform linux/amd64,linux/arm64 "${tags[@]}" --push .
+          # **Both extras, and their absence was a defect in 0.1.0a1** (item 150). `ARG EXTRAS=` is
+          # empty by default, this line was missing, and the published image therefore had neither
+          # `sentry-sdk` nor `psycopg`. Measured against the published artefact: with
+          # `HULLWORK_ERROR_DSN` set it exited 3 telling the operator to run a `pip install` they
+          # cannot run against an image they pulled, and a `postgresql://` URL died in a raw
+          # SQLAlchemy traceback — while the README's support matrix said Postgres works. Two
+          # capabilities documented in three places each, impossible in the thing we ship.
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --build-arg EXTRAS='[postgres,telemetry]' "${tags[@]}" --push .
 
       # `--verify-tag` so a release cannot be created for a tag that was deleted between the push and
       # this step, and `--notes-from-tag` because the annotation is where the notes belong: it travels

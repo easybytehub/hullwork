@@ -183,3 +183,21 @@ def test_a_prerelease_does_not_move_the_latest_tag() -> None:
     assert '[ "$STABLE" = "true" ] || flags+=(--prerelease)' in text, (
         "an alpha released without --prerelease shows up as the recommended download"
     )
+
+
+def test_the_release_bakes_the_extras_into_the_image() -> None:
+    """The defect of `0.1.0a1`, and the reason it is a test rather than a fixed line.
+
+    `ARG EXTRAS=` is empty and this line was simply missing, so the published image had neither
+    `sentry-sdk` nor `psycopg`. Both are documented capabilities — reporting Hullwork's own crashes
+    to your tracker, and running on Postgres — and both were impossible in the artefact. Nobody
+    noticed because a development checkout installs `[dev]`, which carries them.
+
+    Asserted on the workflow because that is where the omission lived, and by extra name because a
+    later edit dropping one of them would otherwise be silent again.
+    """
+    text = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert "--build-arg EXTRAS=" in text, "with no extras the image is missing both"
+    for extra in ("postgres", "telemetry"):
+        assert extra in text.split("--build-arg EXTRAS=")[1].split("\n")[0], extra

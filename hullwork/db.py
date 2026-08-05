@@ -10,9 +10,12 @@ from contextlib import contextmanager
 from functools import lru_cache
 
 from sqlalchemy import Engine, create_engine, event
+from sqlalchemy.engine import make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import ConnectionPoolEntry
+
+from hullwork.config import ConfigError
 
 #: How long a writer waits for another writer before giving up.
 #:
@@ -28,8 +31,42 @@ from sqlalchemy.pool import ConnectionPoolEntry
 BUSY_TIMEOUT_MS = 5000
 
 
+def _the_driver_has_to_be_installed(url: str) -> None:
+    """Refuse a database URL whose driver is not here, and name the extra that carries it.
+
+    **Measured against the published image, 2026-08-05** (item 150). `ghcr.io/…/hullwork:0.1.0a1`
+    shipped without the `postgres` extra, so `postgresql+psycopg://…` died eleven frames down as
+    `ModuleNotFoundError: No module named 'psycopg'`, raised inside SQLAlchemy's dialect loader —
+    while the README's support matrix said Postgres works.
+
+    The root cause was the build and is fixed there. This exists for the case that remains: somebody
+    building their own image without the extra, who deserves the sentence `telemetry`'s missing SDK
+    already gets in `config.py` rather than a traceback about a module they never heard of.
+
+    Deliberately by *asking*, not by parsing the URL for names we recognise: `create_engine` knows
+    which dialect a URL means and which module that dialect needs, and a list of our own would be
+    wrong the day somebody uses a driver we did not think of.
+    """
+    try:
+        make_url(url).get_dialect()
+    except ModuleNotFoundError as missing:
+        extra = "postgres" if "psycopg" in str(missing) else None
+        remedy = (
+            f"Install it with: pip install 'hullwork[{extra}]'"
+            if extra
+            else f"Install the driver it needs: pip install {missing.name}"
+        )
+        raise ConfigError(
+            f"HULLWORK_DATABASE_URL names a database whose driver is not installed "
+            f"({missing}).\n"
+            f"  {remedy}\n"
+            f"  Or use SQLite, which needs nothing: HULLWORK_DATABASE_URL=sqlite:////data/hullwork.db"
+        ) from missing
+
+
 def make_engine(url: str, *, echo: bool = False) -> Engine:
     """Build an engine, applying the settings SQLite needs to behave like a real database."""
+    _the_driver_has_to_be_installed(url)
     connect_args: dict[str, object] = {}
     if url.startswith("sqlite"):
         # Sessions are used from FastAPI's threadpool, so the connection cannot be pinned to the
