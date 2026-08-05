@@ -1,0 +1,105 @@
+# Hullwork, watched by Hullwork.
+#
+# The lanes below are matched against the *error* — its title and culprit — not against the parts
+# of the repository a work item would touch. Those are two different questions, and the worker contract
+# answers the other one: what an unattended worker may change. This file answers what an incoming
+# production fault is allowed to become.
+#
+# Red wins over amber, amber over green, and anything matching nothing at all is red.
+
+project: hullwork
+
+git:
+  provider: forgejo
+  repo: easybyte/hullwork
+
+errors:
+  provider: glitchtip
+
+ci: forgejo-actions
+
+autofix:
+  # Principle 8: Hullwork maintains Hullwork before it asks anyone else to trust it. Turned on
+  # 2026-07-28, once item 053 made this repository's own suite pass inside its own sandbox image —
+  # until then step 0 could not have passed here and every item would have gone `baseline-red`.
+  #
+  # Nothing runs unattended because of this line: `hullwork work` is invoked by a scheduler that
+  # does not exist yet, and it refuses without a code credential the live instance does not hold.
+  agent: claude-code
+  sandbox: docker
+  lanes:
+    green:
+      - typeerror
+      - valueerror
+      - attributeerror
+      - keyerror
+      - indexerror
+    amber:
+      # Anything about the shape of the database or what is installed: recoverable, but a fix is a
+      # migration or a dependency change, which the worker contract already keeps away from a worker.
+      - alembic
+      - migration
+      - integrityerror
+      - operationalerror
+      - importerror
+      - modulenotfound
+    red:
+      # The inbound surface and everything that authenticates. A failure here is the one case where
+      # the wrong "fix" quietly widens the door, and the capability token lives in this path.
+      - webhook
+      - token
+      - secret
+      - signature
+      - credential
+      - unauthorised
+      - unauthorized
+      - forbidden
+      # Territory, added with item 071. The lists above are exception types — a prediction about
+      # which bugs this repository will have, and the measured lesson is that the prediction misses.
+      # These are facts about where the code is instead, and they do not go stale.
+      - 'hullwork/gateway/**'      # the recording proxy: the provenance seal is read here
+      - 'hullwork/webhook*'
+      - 'hullwork/scrub.py'        # what never reaches a model
+      - 'hullwork/states.py'       # the transition table every guardrail is expressed in
+      - 'hullwork/triage.py'       # decides what an agent may touch, including itself
+  # Item 072, DR-0008 part 3. **This repository is the first project to opt in, deliberately: own
+  # code, no client depending on it.** Anything the lists above do not mention is attempted rather
+  # than sent to a human — because a catalogue of exception types cannot be complete, and the four
+  # entries that would have caught this repository's last real failure were not on it.
+  #
+  # What that accepts: an agent reading and modifying modules nobody thought to declare. What it
+  # does not change: one attempt, a green baseline first, a failing test before the fix, a draft PR,
+  # and a human merge. The red territory above is where it stops.
+  unmatched: attempt
+  # Both gates have a command below. Naming `lint` without one is refused since item 021: a
+  # gate with nothing behind it is a guardrail that exists only in this file.
+  gates: [tests, lint, human-merge]
+
+# Split, so the dispatcher does not run the same suite twice and report it as two independent
+# verifications. The definition of done for a human is still all three, and CI runs all three.
+tests: "pytest"
+lint: "ruff check . && mypy ."
+
+# Where a reproducing test may be created, and nowhere else (spec M2 §3).
+test_path: tests
+
+# What the sandbox is built from (item 037). Hullwork generates the Dockerfile from this; a
+# repository names a base it trusts and never supplies an image, for the same reason it names an
+# agent and never supplies a command (item 017).
+runtime:
+  base: python-3.12
+  # `uv`, not `pip`: `pip install -r pyproject.toml` is not a valid invocation, and this file
+  # declared it for weeks without anybody noticing, because nothing ever built the image. Item 051
+  # made the parser refuse the combination — which is how this line got found.
+  install: uv
+  dependencies: [pyproject.toml, uv.lock]
+  # Three of this repository's own tests shell out to `git`, and `python:3.12-slim` does not have
+  # it — measured, inside this very image (item 053). Naming it is the whole mechanism: the
+  # instance decides what the name installs, the repository never supplies a command.
+  packages: [git]
+
+notify:
+  # `console` because this instance's logs are read by the person who owns it, and because a
+  # notifier nobody has ever seen run is a notifier nobody should trust. `telegram` and
+  # `email` parse but are refused at delivery until somebody exercises them.
+  channel: console

@@ -1,0 +1,48 @@
+# The complete example from docs/hullwork-yml.md. If this stops parsing, the spec and the code
+# have drifted apart and one of them is wrong.
+#
+# It had drifted: the lanes here were still the pre-item-017 ones (`isolated-bugfix`, `docs`),
+# which is the set item 020 removed from the documentation for being unable to ever match.
+project: demo
+
+errors:
+  provider: glitchtip
+
+git:
+  provider: forgejo
+  repo: acme/demo
+
+ci: forgejo-actions
+
+deploy: compose
+
+autofix:
+  agent: claude-code
+  sandbox: docker
+  lanes:
+    green:
+      - typeerror
+      - valueerror
+      - app.reports
+    amber:
+      - migration
+      - alembic
+    red:
+      - secrets
+      - auth
+      - payments
+  gates: [tests, lint, human-merge]
+
+tests: "pytest"
+lint: "ruff check . && mypy ."
+test_path: tests
+
+runtime:
+  base: python-3.12
+  install: uv
+  dependencies: [pyproject.toml, uv.lock]
+
+health_url: https://demo.example.com/health
+
+notify:
+  channel: telegram

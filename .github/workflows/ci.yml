@@ -1,0 +1,86 @@
+# The three gates from the project's constitution are the definition of done. No commit lands red.
+#
+# **Every action is pinned to a full commit SHA, with its version in a comment.** The public mirror's
+# organisation requires it and refused the whole job otherwise — *"all actions must be pinned to a
+# full-length commit SHA"*, failing at `Set up job` before a single step of ours ran. The policy is
+# right: a tag is a moving pointer somebody else controls, so `@v4` means "whatever that account
+# publishes next", and this workflow installs the dependencies and runs the tests of a tool that holds
+# a token which can push. Pinning is the difference between trusting a commit and trusting an account.
+#
+# Refresh deliberately, never by habit: read what changed, then move the SHA and the comment together.
+# A comment that disagrees with the SHA beside it is worse than no comment.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with: { python-version: "3.12" }
+
+      # **Installed from `uv.lock`, not resolved fresh** (item 149). `pip install -e ".[dev]"`
+      # resolves against PyPI at the moment it runs, so the three gates below were evaluated against
+      # whatever was published that morning — against floors as wide as `mypy>=1.13` with
+      # `strict = true`, where a minor release of the type checker turns a green suite red without a
+      # line of ours changing. A dependency bump is now a reviewed commit to the lock instead.
+      #
+      # `--frozen` so the lock is used and never rewritten: a CI job that silently re-resolves is the
+      # same problem with an extra step. And `.python-version` pins the interpreter, because
+      # `uv sync` resolved **3.13** while this file said 3.12 — so "the environment the lock
+      # describes" was not the environment CI ran, which is half of what item 149 measured.
+      # One step, not two, and that is not tidiness: `hullwork propose` derives a project's
+      # install command by reading this file, and it takes the first install-shaped step it
+      # finds — which was `pip install uv`, a true line and the wrong answer. Measured by its
+      # own test failing. The pair together is the install command, so it reads as one.
+      - run: pip install uv && uv sync --frozen --extra dev
+      - run: uv run ruff check .
+      - run: uv run mypy .
+
+      # **Green here has always meant less than it looked, and now it says so.** The sandbox tests
+      # are marked `needs_docker` and skip when `docker info` fails, which is the case on a runner
+      # with no daemon — so the suite was green precisely where Docker is absent and red on the
+      # machine of anyone following the quickstart, which requires it. Two of them were genuinely
+      # broken for an unknown length of time and the first person to find out was a stranger
+      # evaluating the product on 2026-08-04.
+      #
+      # `-ra` prints the skip reasons rather than a count, and the step below states the gap in the
+      # log instead of leaving a reader to infer it from a number. Not a failure: a runner without a
+      # daemon is a legitimate place to check ruff, mypy and the other 1300 tests.
+      - name: say whether the sandbox tests can run here
+        run: |
+          if docker info >/dev/null 2>&1; then
+            echo "Docker is reachable: the sandbox tests run in this job."
+          else
+            echo "::warning::No Docker daemon on this runner, so every needs_docker test SKIPS."
+            echo "::warning::This gate does not cover the sandbox. Run 'pytest' on a host with"
+            echo "::warning::Docker before trusting a green tick here — see CONTRIBUTING.md."
+          fi
+      - run: uv run pytest -ra
+
+  # DR-0001: the DCO is our contributor agreement, so it gets checked, not just documented.
+  # Deliberately our own five lines of shell: several published DCO actions call the GitHub API to
+  # list a PR's commits, which does not exist here.
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with: { fetch-depth: 0 }
+      - name: every commit carries a sign-off
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          [ -n "$base" ] || base="$(git merge-base origin/main HEAD)"
+          fail=0
+          for sha in $(git rev-list --no-merges "$base"..HEAD); do
+            if ! git show -s --format=%B "$sha" | grep -qiE '^Signed-off-by: .+ <.+@.+>'; then
+              echo "::error::missing sign-off: $(git log -1 --format='%h %s' "$sha")"
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] || { echo "Fix with: git rebase --signoff $base — see CONTRIBUTING.md"; exit 1; }

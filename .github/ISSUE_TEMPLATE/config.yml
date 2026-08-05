@@ -1,0 +1,13 @@
+# Deliberately `true`: a report that does not fit either template is still worth having, and a chooser
+# that refuses the blank option turns "I am not sure this is a bug" into silence.
+blank_issues_enabled: true
+contact_links:
+  - name: What works, what does not, and what nobody has shown
+    url: https://github.com/easybytehub/hullwork/blob/main/docs/status.md
+    about: Read this before reporting something as broken — it may already be listed as unproven.
+  - name: Questions people actually ask
+    url: https://github.com/easybytehub/hullwork/blob/main/docs/faq.md
+    about: Cost, whether it can push to your main branch, how to stop it, what leaves your network.
+  - name: A security issue
+    url: https://github.com/easybytehub/hullwork/blob/main/SECURITY.md
+    about: Not a public issue. SECURITY.md says where to send it and what is in scope.

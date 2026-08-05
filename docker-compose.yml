@@ -1,0 +1,38 @@
+# Local evaluation stack. Bound to loopback on purpose: the webhook endpoint is real now, and
+# nothing here should be reachable from the network without a reverse proxy and TLS in front of it.
+#
+# This file is **one of Hullwork's two programs** (spec M2 §1). It gives you ingest, deduplication,
+# triage and issues. It does not attempt fixes, and no setting here turns that on:
+#
+#   * the dispatcher (`hullwork work`) needs the Docker daemon, and a long-lived network-reachable
+#     service with the Docker socket mounted is root-equivalent on its host — so there is
+#     deliberately no second service here with `/var/run/docker.sock` in it;
+#   * it needs `HULLWORK_FORGE_CODE_TOKEN`, and the whole point of the split is that the process
+#     answering webhooks never holds a credential that can push. **The service refuses to start if
+#     it finds one** (item 032): a variable that is present and unused is indistinguishable from a
+#     boundary that has quietly been removed, and compose files get copied.
+#
+# Installing it is a step, not a flag: docs/deployment-notes.md, "Installing the second program".
+services:
+  api:
+    build: .
+    image: hullwork:dev
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    environment:
+      # Where this instance is reachable from outside. It goes into the webhook URLs the CLI prints,
+      # so `127.0.0.1` is only correct while you are evaluating.
+      HULLWORK_BASE_URL: "${HULLWORK_BASE_URL:-http://127.0.0.1:8000}"
+      # The forge to file issues in. Without these, ingest and triage still work and items simply
+      # wait unmaterialised until the credentials arrive.
+      HULLWORK_FORGE_URL: "${HULLWORK_FORGE_URL:-}"
+      HULLWORK_FORGE_TOKEN: "${HULLWORK_FORGE_TOKEN:-}"
+      HULLWORK_LOG_FORMAT: "${HULLWORK_LOG_FORMAT:-json}"
+    volumes:
+      # The database survives `docker compose down`. Losing it means losing every fingerprint, which
+      # would make every already-known error look new again the next morning.
+      - hullwork-data:/data
+
+volumes:
+  hullwork-data:

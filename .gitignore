@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.*
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+.DS_Store
+# The default `HULLWORK_DATABASE_URL` is `sqlite:///./hullwork.db`, so any command run without one
+# leaves a database in the working tree. It is somebody's local state and never the project's —
+# and `hullwork doctor` exists partly to tell you that you are reading one of these by accident.
+*.db
+*.db-wal
+*.db-shm
+# `uv.lock` is NOT ignored. It was, and that was wrong for an application: the lock is what makes
+# `uv sync --frozen` reproducible, and item 051 made it a declared sandbox dependency — so an
+# ignored lock means the image is built from an incomplete set and the dispatcher refuses. Caught
+# by that refusal on the first real rehearsal, after a commit message had already claimed the lock
+# was committed. A library would ignore it; this is not one.

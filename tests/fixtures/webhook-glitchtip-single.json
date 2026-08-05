@@ -1,0 +1,18 @@
+{
+  "_comment": "Shape read from GlitchTip's apps/alerts/webhooks.py (WebhookPayload.to_dict) on 2026-07-26. Keys whose value is None are dropped by the builder, which is why other fixtures here have fewer of them.",
+  "text": "GlitchTip Alert",
+  "attachments": [
+    {
+      "title": "TypeError: cannot read property 'total' of undefined",
+      "title_link": "https://glitchtip.example.com/easybyte/issues/4821",
+      "text": "app.views.checkout in process_payment",
+      "color": "#e52b50",
+      "fields": [
+        {"title": "Project", "value": "demo", "short": true},
+        {"title": "Environment", "value": "production", "short": true},
+        {"title": "Release", "value": "1.4.2", "short": false}
+      ],
+      "mrkdown_in": ["text"]
+    }
+  ]
+}

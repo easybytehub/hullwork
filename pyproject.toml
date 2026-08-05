@@ -1,0 +1,107 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hullwork"
+description = "From production errors to reviewable pull requests, on your own infrastructure."
+readme = "README.md"
+# **Narrowed 2026-08-04, because the wider range was a claim this project did not meet.**
+# 3.13 and 3.14 are red: `filterwarnings = ["error"]` turns unclosed SQLite connections into
+# failures, and item 149 fixed 497 of 498 of them without closing the last. Declaring support
+# for a version the suite fails on is the same defect as a README documenting a command that
+# does not exist — and `python3` is 3.14 on a current Mac, which is what somebody gets by
+# typing the obvious thing. Widen this the day the suite is green there, not before.
+requires-python = ">=3.12,<3.13"
+license = { file = "LICENSE.md" }
+authors = [{ name = "EasyByte Hub, S. Coop. Mad." }]
+keywords = ["forgejo", "gitea", "self-hosted", "error-tracking", "coding-agent"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Framework :: FastAPI",
+  "License :: Other/Proprietary License",
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
+]
+dynamic = ["version"]
+dependencies = [
+  "fastapi>=0.115",
+  "httpx2>=2.9",
+  "pydantic-settings>=2.6",
+  "pyyaml>=6.0",
+  "sqlalchemy>=2.0",
+  "alembic>=1.13",
+  "uvicorn[standard]>=0.32",
+]
+
+[project.optional-dependencies]
+# Production runs on Postgres; the quickstart runs on SQLite and needs none of this.
+postgres = ["psycopg[binary]>=3.2"]
+# Hullwork reporting its OWN errors, off unless HULLWORK_ERROR_DSN is set. Optional on purpose:
+# a self-hosted tool should not install an error-reporting SDK you did not ask for.
+telemetry = ["sentry-sdk>=2"]
+dev = [
+  "mypy>=1.13",
+  # so the telemetry path is exercised for real, not skipped into a false pass
+  "sentry-sdk>=2",
+  "pytest>=8.3",
+  "ruff>=0.8",
+  "types-PyYAML>=6.0",
+]
+
+[project.scripts]
+hullwork = "hullwork.cli:main"
+
+[project.urls]
+Homepage = "https://easybyte.es"
+
+[tool.hatch.version]
+path = "hullwork/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hullwork"]
+
+# --- Gate 1: ruff check ------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # import sorting
+  "N",   # pep8-naming
+  "UP",  # pyupgrade
+  "ANN", # missing annotations (mypy strict's companion)
+  "S",   # flake8-bandit — security is a feature, not a hardening pass
+  "B",   # flake8-bugbear
+  "C4",  # comprehensions
+  "SIM", # simplify
+  "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"] # asserts are the point of a test
+# Alembic writes these; reformatting by hand is lost on the next autogenerate.
+"migrations/versions/*" = ["E501", "W291"]
+
+# --- Gate 2: mypy . ----------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+exclude = ["^\\.venv/", "^build/", "^dist/"]
+
+# --- Gate 3: pytest ----------------------------------------------------------
+[tool.pytest.ini_options]
+# `-rs` prints **why** anything skipped, which the sandbox tests depend on: they are gated on a
+# reachable Docker daemon, and "9 skipped" without reasons reads as noise rather than as "the
+# isolation boundary went unproven here". Found on 2026-08-04.
+addopts = "-q -rs --strict-markers --strict-config"
+testpaths = ["tests"]
+# Deprecations are read as failures, not as scrollback: a warning ignored today is a
+# silent breakage two upgrades from now. Add a targeted ignore, never a blanket one.
+filterwarnings = ["error"]

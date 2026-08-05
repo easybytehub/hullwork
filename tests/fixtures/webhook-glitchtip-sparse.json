@@ -1,0 +1,11 @@
+{
+  "_comment": "The awkward one: no colour (level below WARNING, so get_hex_color returned None), no culprit, no fields beyond Project. Only title and title_link are ever guaranteed.",
+  "text": "GlitchTip Alert",
+  "attachments": [
+    {
+      "title": "Debug trace captured",
+      "title_link": "https://glitchtip.example.com/easybyte/issues/999",
+      "fields": [{"title": "Project", "value": "demo", "short": true}]
+    }
+  ]
+}

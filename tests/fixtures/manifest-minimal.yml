@@ -1,0 +1,6 @@
+# The smallest manifest that should work. Everything else must have a safe default —
+# in particular autofix.agent, which defaults to `none` (DR-0002).
+project: minimal
+git:
+  provider: forgejo
+  repo: easybyte/minimal

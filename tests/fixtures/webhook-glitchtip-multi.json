@@ -1,0 +1,26 @@
+{
+  "_comment": "One POST carrying three distinct errors: send_webhook_notification packs up to MAX_ISSUES_PER_ALERT issues into attachments[]. Assuming one event per request would drop two of these.",
+  "text": "GlitchTip Alert (3 issues)",
+  "attachments": [
+    {
+      "title": "TypeError: cannot read property 'total' of undefined",
+      "title_link": "https://glitchtip.example.com/easybyte/issues/4821",
+      "text": "app.views.checkout in process_payment",
+      "color": "#e52b50",
+      "fields": [{"title": "Project", "value": "demo", "short": true}]
+    },
+    {
+      "title": "OperationalError: could not connect to server",
+      "title_link": "https://glitchtip.example.com/easybyte/issues/4822",
+      "text": "app.db in connect",
+      "color": "#e52b50",
+      "fields": [{"title": "Project", "value": "demo", "short": true}]
+    },
+    {
+      "title": "Deprecation notice in payment adapter",
+      "title_link": "https://glitchtip.example.com/easybyte/issues/4823",
+      "color": "#e9b949",
+      "fields": [{"title": "Project", "value": "demo", "short": true}]
+    }
+  ]
+}

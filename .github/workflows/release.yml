@@ -1,0 +1,91 @@
+# What a tag produces, so that installing does not mean compiling.
+#
+# **The gap this closes.** Every way into Hullwork went through `git clone` and a build: the evaluation
+# stack is `build: .`, and `hullwork try` needs `pip install -e .` from a checkout. That is several
+# minutes and a toolchain before anybody has seen the product do anything, on a decision they have not
+# made yet. Every self-hosted project people actually try — Uptime Kuma, Plausible, Forgejo, n8n — leads
+# with a command that runs a *published artefact*. This is that.
+#
+# **Committed rather than generated, unlike the CI mirror.** Forgejo Actions also reads `.github/`, which
+# is why `ci.yml` is written by the publish script instead of committed — a copy would run every job
+# twice on the primary. This one carries a repository guard instead, so it is visible and reviewable in
+# both places and executes in exactly one.
+#
+# **No third-party actions.** `docker` and `gh` are on the runner, so the only things to pin are the two
+# actions the CI already pins. A release workflow is the worst place to widen a supply chain: it holds a
+# token that can write packages and publish releases.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # create the release, attach the wheel
+  packages: write   # push the image to ghcr.io
+
+jobs:
+  publish:
+    # The primary forge has neither this registry nor these credentials, and a tag pushed to both would
+    # otherwise fail there on every release for no reason.
+    if: github.repository == 'easybytehub/hullwork'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with: { python-version: "3.12" }
+
+      # **The tag is the version, and it has to agree with the package.** A release whose image says
+      # 0.2.0 and whose wheel says 0.1.0 is unusable for anybody pinning either, and the failure shows
+      # up months later in a bug report nobody can reproduce. Checked before anything is published.
+      - name: The tag and `__version__` must agree
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          declared=$(python -c 'import hullwork; print(hullwork.__version__)')
+          if [ "$tagged" != "$declared" ]; then
+            echo "::error::tag is v$tagged and hullwork.__version__ is $declared."
+            echo "Bump the package or move the tag; publishing them apart is worse than not publishing."
+            exit 1
+          fi
+          echo "version=$tagged" >> "$GITHUB_OUTPUT"
+          # **A prerelease must not become `latest`.** `0.1.0a1` is what this project is, and somebody
+          # typing `docker pull …:latest` next year should not silently land on the first alpha ever
+          # published. Only a plain `N.N.N` moves the moving tag.
+          if printf '%s' "$tagged" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$tagged is a prerelease: publishing the version tag only, not latest."
+          fi
+        id: version
+
+      - name: Build the wheel
+        run: |
+          pip install --quiet build
+          python -m build --wheel
+
+      - name: Push the image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          STABLE: ${{ steps.version.outputs.stable }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          image="ghcr.io/${{ github.repository }}"
+          tags=(--tag "$image:$VERSION")
+          [ "$STABLE" = "true" ] && tags+=(--tag "$image:latest")
+          # Both architectures: the sandbox image a project declares has to match the host's, and an
+          # amd64-only publish quietly excludes every arm64 deployment.
+          docker buildx create --use --name release
+          docker buildx build --platform linux/amd64,linux/arm64 "${tags[@]}" --push .
+
+      # `--verify-tag` so a release cannot be created for a tag that was deleted between the push and
+      # this step, and `--notes-from-tag` because the annotation is where the notes belong: it travels
+      # with the tag rather than living only in a web form.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STABLE: ${{ steps.version.outputs.stable }}
+        run: |
+          flags=(--verify-tag --title "$GITHUB_REF_NAME" --notes-from-tag)
+          [ "$STABLE" = "true" ] || flags+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}" dist/*.whl

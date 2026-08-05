@@ -1,0 +1,24 @@
+{
+  "_comment": "Envelope from app_platform_event.py; data.event is the normalised event plus the four keys _webhook_event_data adds (url, web_url, issue_url, issue_id). Read 2026-07-26.",
+  "action": "triggered",
+  "installation": {"uuid": "a8e5d2f0-3c11-4a7e-9f21-5b6d0e4c1122"},
+  "actor": {"type": "application", "id": "sentry", "name": "Sentry"},
+  "data": {
+    "triggered_rule": "Send a notification for new issues",
+    "event": {
+      "event_id": "9f1c2b7e4a3d4f8ea1b2c3d4e5f60718",
+      "project": 4507123,
+      "title": "TypeError: cannot read property 'total' of undefined",
+      "culprit": "app.views.checkout in process_payment",
+      "level": "error",
+      "platform": "python",
+      "datetime": "2026-07-26T03:41:07.221000Z",
+      "message": "",
+      "url": "https://sentry.io/api/0/projects/acme/demo/events/9f1c2b7e/",
+      "web_url": "https://sentry.io/organizations/easybyte/issues/5512334/events/9f1c2b7e/",
+      "issue_url": "https://sentry.io/api/0/organizations/easybyte/issues/5512334/",
+      "issue_id": "5512334",
+      "tags": [["level", "error"], ["environment", "production"]]
+    }
+  }
+}
