@@ -112,8 +112,10 @@ hullwork propose --checkout .          # a manifest, read from your CI configura
 code, and writes nothing outside a directory you name. → above, and
 [docs/install.md § 1](docs/install.md#1-try-the-agent-half)
 
-**2. The evaluation stack.** Needs Docker and nothing else. One container — the half that answers
-webhooks — which starts with no credentials at all and says in a sentence what it cannot do yet.
+**2. The evaluation stack.** Needs Docker and nothing else — **no clone and no build**: one compose
+file and a published image (`ghcr.io/easybytehub/hullwork:0.1.0a1`, amd64 and arm64). One container, the
+half that answers webhooks, which starts with no credentials at all and says in a sentence what it
+cannot do yet.
 → [docs/install.md § 2](docs/install.md#2-the-evaluation-stack)
 
 **3. A real deployment.** Needs Docker on a Linux host, and a forge token that can file issues and

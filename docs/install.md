@@ -86,15 +86,19 @@ hullwork propose --checkout .          # a manifest read from your CI configurat
 
 ## 2. The evaluation stack
 
-Run from a clone of this repository. It is **one container**: the receiver, which is the half that
-answers webhooks. Nothing here can push to anything.
+**One file and a published image — no clone, no build.** It is **one container**: the receiver, which
+is the half that answers webhooks. Nothing here can push to anything.
 
 ```bash
-git clone <this repository> hullwork && cd hullwork
-docker compose up --build -d
+curl -O https://raw.githubusercontent.com/easybytehub/hullwork/main/docker-compose.yml
+docker compose up -d
 curl http://127.0.0.1:8000/health
 # {"status":"ok","version":"0.1.0a1"}
 ```
+
+The image is `ghcr.io/easybytehub/hullwork:0.1.0a1`, built for amd64 and arm64, pinned in that compose
+file rather than floating on `latest`. From a clone, `docker compose up -d --build` builds your own
+instead — which is what you want if you are testing a change.
 
 **No credentials are required to start it.** With no forge configured, migrations run, `/health`
 answers and `/ready` answers 200 with `"forge":"unknown"`. Ingest and triage work; items wait

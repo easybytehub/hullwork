@@ -15,8 +15,17 @@
 # Installing it is a step, not a flag: docs/deployment-notes.md, "Installing the second program".
 services:
   api:
-    build: .
-    image: hullwork:dev
+    # **A published image, so evaluating does not mean compiling.** Every way into Hullwork used to
+    # start with `git clone` and a multi-minute build, which is a toolchain and ten minutes spent
+    # before anybody has seen the product do anything. `docker compose up -d` against this file pulls
+    # instead — the file is the only thing you need, and it works on amd64 and arm64.
+    #
+    # Pinned, not `latest`: an evaluation should not change under you between two runs, and `latest`
+    # deliberately does not move for a prerelease anyway.
+    #
+    # To run your own build instead — a change you are testing, or an architecture with no published
+    # image — add `build: .` beside this line from a checkout, and `docker compose up -d --build`.
+    image: ghcr.io/easybytehub/hullwork:0.1.0a1
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
