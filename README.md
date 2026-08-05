@@ -1,35 +1,48 @@
-# Hullwork
+![Hullwork — from production errors to reviewable draft pull requests. Self-hosted, with your forge,
+your error tracker, your model endpoint and a human gate on every merge.](images/banner.svg)
 
 [![CI](https://github.com/easybytehub/hullwork/actions/workflows/ci.yml/badge.svg)](https://github.com/easybytehub/hullwork/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/easybytehub/hullwork?include_prereleases&label=release&color=blue)](https://github.com/easybytehub/hullwork/releases)
+[![Image](https://img.shields.io/badge/ghcr.io-hullwork-blue?logo=docker&logoColor=white)](https://github.com/easybytehub/hullwork/pkgs/container/hullwork)
+[![Python](https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white)](pyproject.toml)
 [![Licence: FSL-1.1-ALv2](https://img.shields.io/badge/licence-FSL--1.1--ALv2-blue)](LICENSE.md)
-
-> The missing link in your self-hosted stack: from production errors to reviewable pull requests — on
-> your infrastructure, with your API keys, with a human gate on every merge.
-
-```
- production error ──► error tracker ──► webhook ──┐
- (GlitchTip / any                                  │
-  Sentry-compatible)                               ▼
-                                        ┌─────── HULLWORK ───────┐
- human report ────► normalizer ───────► │ triage · dedup · lanes │
- (email / chat)                         └───────────┬────────────┘
-                                                    ▼
-                                        work item (risk-laned)
-                                                    ▼
-                                 coding agent (sandboxed, your key)
-                                                    ▼
-                                        pull request (draft)
-                                                    ▼
-                                     ✋ HUMAN GATE — review & merge
-                                                    ▼
-                                        deploy (your pipeline)
-```
-
-One declarative file per repository (`hullwork.yml`) — no per-project glue code.
 
 **Pre-alpha.** Both halves run end to end, five attempts have reached a draft pull request, and nobody
 outside this project has installed it. What works, what does not, and what nobody has demonstrated are
 all in **[docs/status.md](docs/status.md)** — read that before relying on any of this.
+
+> **What this repository is.** All of Hullwork, under a source-available licence that becomes
+> Apache-2.0 two years after each release: the whole loop, uncapped, for as many projects as you like.
+> There is no paid edition in here and no feature withheld from it. What is *not* here is EasyByte's own
+> reasoning — decision records, the plan, the specifications — which is cited by name throughout the
+> source and published on request. Nothing in it is needed to run this.
+
+## Contents
+
+- [What it does](#what-it-does)
+- [What it actually produced, once](#what-it-actually-produced-once)
+- [What you look at every day](#what-you-look-at-every-day)
+- [See it work in five minutes](#see-it-work-in-five-minutes-with-no-account-anywhere)
+- [Ways to run it](#ways-to-run-it)
+- [What it works with](#what-it-works-with)
+- [How this differs from things that sound like it](#how-this-differs-from-things-that-sound-like-it)
+- [Principles](#principles)
+- [The two properties everything else rests on](#the-two-properties-everything-else-rests-on)
+- [Documentation](#documentation)
+- [Development, and contributing](#for-development)
+- [Where this is going](#where-this-is-going)
+- [Licence](#licence)
+
+## What it does
+
+![Two things arrive — a production error by webhook, and a human report through a normaliser. Hullwork
+triages, deduplicates and assigns a risk lane. Green items are attempted unattended, amber wait for your
+approval, red are never attempted at all; anything matching no lane is red. A green item goes to a coding
+agent in a sandbox with your model key, one attempt, and a test that fails before the change and passes
+after or nothing is opened. The result is a draft pull request that a person merges — always — and your
+own pipeline deploys.](images/the-pipeline.svg)
+
+One declarative file per repository (`hullwork.yml`) — no per-project glue code.
 
 ## What it actually produced, once
 
@@ -62,8 +75,8 @@ up](images/the-daily-page.png)
 One read-only page, no buttons, about forty seconds. What is running, what is stuck behind it, and what
 is **waiting on you** — the third column, because that is the only one that is your problem. The
 evidence an evaluator wants is further down the same page, never in front of the person who opens it
-daily. There is nothing to log into: the URL carries a bearer token and that URL *is* the credential
-(the interface).
+daily. There is nothing to log into: the URL carries a bearer token and that URL *is* the credential —
+mint one with `hullwork page-token`, and everything without it gets the same 404 an unknown path gets.
 
 ## See it work in five minutes, with no account anywhere
 
@@ -111,10 +124,10 @@ hullwork propose --checkout .          # a manifest, read from your CI configura
 code, and writes nothing outside a directory you name. → above, and
 [docs/install.md § 1](docs/install.md#1-try-the-agent-half)
 
-**2. The evaluation stack.** Needs Docker and nothing else — **no clone and no build**: one compose
-file and a published image (`ghcr.io/easybytehub/hullwork:0.1.0a1`, amd64 and arm64). One container, the
-half that answers webhooks, which starts with no credentials at all and says in a sentence what it
-cannot do yet.
+**2. The evaluation stack — recommended for a first look.** Needs Docker and nothing else, with **no
+clone and no build**: one compose file and a published image (`ghcr.io/easybytehub/hullwork:0.1.0a1`,
+amd64 and arm64). One container — the half that answers webhooks — which starts with no credentials at
+all and says in a sentence what it cannot do yet.
 → [docs/install.md § 2](docs/install.md#2-the-evaluation-stack)
 
 **3. A real deployment.** Needs Docker on a Linux host, and a forge token that can file issues and
@@ -123,6 +136,26 @@ next to a self-hosted tracker are recorded in [docs/deployment-notes.md](docs/de
 → [docs/install.md § 3](docs/install.md#3-a-real-deployment)
 
 There is no hosted option, and multi-tenancy is deliberately not in this repository.
+
+## What it works with
+
+**✅ exercised against a real one · ⚠️ written and unmeasured · ❌ refused, with a reason.** The
+difference between the first two is the whole point of the table: *written* means the code exists and no
+instance has ever run it, which is not support.
+
+| | | |
+|---|---|---|
+| **Forges** | ✅ Forgejo · ✅ Gitea · ✅ GitHub | ⚠️ GitLab — the adapter is written, no instance has run it |
+| **Error trackers** | ✅ GlitchTip, and anything posting a Sentry-compatible payload | ⚠️ Sentry's signed webhooks — the route is written and switched off, because verifying an HMAC means storing a secret reversibly and that decision has not been made |
+| **Model endpoints** | ✅ anything speaking the Anthropic or OpenAI protocol family — Anthropic and OpenRouter both exercised | Your key, your endpoint. No provider is integrated and none is privileged |
+| **Agents** | ✅ `claude-code`, exercised | Any container that takes a worktree and returns changed files qualifies: the agent is a contract, not an integration |
+| **Your stack** | ✅ any Linux image with a shell, on this instance's architecture — you name the image your CI already uses | ❌ `distroless` and `scratch`, refused at registration rather than at attempt time |
+| **Databases** | ✅ SQLite · ✅ Postgres | SQLite is what our own instance runs on |
+| **Host** | ✅ Linux, both halves | ⚠️ macOS — ways 1 and 2 only: the dispatcher joins the Docker daemon's group and Docker Desktop ignores `group_add` |
+| **Notifications** | ✅ `none` · ✅ `console` | ⚠️ `telegram` and `email` parse in the manifest and are refused at delivery, because a transport nobody has exercised has its first real run in front of a user |
+
+No success rate is published, and that is deliberate: five attempts is not a rate.
+**[docs/status.md](docs/status.md)** carries every claim above with its date.
 
 ## How this differs from things that sound like it
 

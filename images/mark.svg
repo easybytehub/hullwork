@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"
+     role="img" aria-labelledby="t d">
+  <title id="t">The Hullwork mark</title>
+  <desc id="d">Two filled quadrants of a two-by-two grid, upper left and lower right, diagonally
+    opposed and not touching. It is the glyph U+259A, and it is the product's own shape: two programs
+    that hold different credentials and never call each other.</desc>
+
+  <!-- **The mark is a glyph, not a drawing**, and the interface document chose it before this file
+       existed: `▚`, U+259A, QUADRANT UPPER LEFT AND LOWER RIGHT. Drawn as geometry rather than set as
+       text so it is identical on every platform and crisp at sixteen pixels, where a font would be at
+       the mercy of whatever the reader has installed.
+
+       It means something the product actually claims. Two halves of one square, diagonally opposed,
+       sharing no edge — the receiver and the dispatcher, disjoint credentials, no call between them.
+       Nothing here is a metaphor invented for a logo.
+
+       **Explicit colour rather than `currentColor`.** GitHub renders SVG through an `<img>`, where
+       `currentColor` has nothing to inherit and resolves to black — invisible on a dark page. So the
+       colour adapts here, with light as the default so a viewer that ignores the query still sees it.
+       The page's own favicon is a separate inline glyph and does not use this file. -->
+  <style>
+    .mark { fill: #15171c; }
+    @media (prefers-color-scheme: dark) { .mark { fill: #e7e9ee; } }
+  </style>
+  <g class="mark">
+    <rect x="0" y="0" width="15" height="15" rx="1.5"/>
+    <rect x="17" y="17" width="15" height="15" rx="1.5"/>
+  </g>
+</svg>

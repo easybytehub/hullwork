@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 500" width="760" height="500"
+     role="img" aria-labelledby="t d">
+  <title id="t">What Hullwork does, from a production error to a deploy</title>
+  <desc id="d">Two things arrive: a production error, from GlitchTip or anything Sentry-compatible, by
+    webhook; and a human report by email or chat, through a normaliser. Hullwork triages, deduplicates
+    and assigns a risk lane. That becomes a work item with a lane. A green item goes to a coding agent
+    in a sandbox, using your model key. The agent's work becomes a draft pull request. A person reviews
+    and merges it — always, with no way around it — and your own pipeline deploys. Amber items wait for
+    an explicit approval and red items are never attempted at all.</desc>
+
+  <!-- **This replaced an ASCII diagram**, which was the first thing a reader saw and the only part of
+       the README that looked like 1998. Same content, same order, no invented steps.
+
+       The card carries its own background so it does not depend on the reader's page. Colour marks the
+       lane a decision produces and the one place a person is required — nothing else is coloured, and
+       every coloured thing also says it in words. -->
+  <style>
+    .bg    { fill: #fcfcfd; }
+    .edge  { fill: none; stroke: #e2e5ea; stroke-width: 1.25; }
+    .box   { fill: none; stroke: #9aa2ae; stroke-width: 1.25; }
+    .band  { fill: none; stroke: #5d6470; stroke-width: 1.75; }
+    .gate  { fill: none; stroke: #15171c; stroke-width: 2.25; }
+    .ink   { fill: #15171c; }
+    .muted { fill: #5d6470; }
+    .faint { fill: #868d99; }
+    .ok    { fill: #12693a; }
+    .warn  { fill: #8a5a00; }
+    .bad   { fill: #a32f26; }
+    .arrow { fill: #9aa2ae; stroke: #9aa2ae; stroke-width: 1.25; }
+    text   { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .mono  { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+    @media (prefers-color-scheme: dark) {
+      .bg    { fill: #0f1115; }
+      .edge  { stroke: #262a31; }
+      .box   { stroke: #3a4048; }
+      .band  { stroke: #98a0ad; }
+      .gate  { stroke: #e7e9ee; }
+      .ink   { fill: #e7e9ee; }
+      .muted { fill: #98a0ad; }
+      .faint { fill: #6f7783; }
+      .ok    { fill: #4fb37d; }
+      .warn  { fill: #e3a83a; }
+      .bad   { fill: #ec7d70; }
+      .arrow { fill: #6f7783; stroke: #6f7783; }
+    }
+  </style>
+
+  <rect class="bg" width="760" height="500"/>
+  <rect class="edge" x="0.6" y="0.6" width="758.8" height="498.8"/>
+
+  <!-- What arrives -->
+  <g class="box">
+    <rect x="40" y="32" width="300" height="62" rx="4"/>
+    <rect x="420" y="32" width="300" height="62" rx="4"/>
+  </g>
+  <g class="ink" font-size="14.5">
+    <text x="56" y="58">a production error</text>
+    <text x="436" y="58">a human report</text>
+  </g>
+  <g class="faint" font-size="13">
+    <text x="56" y="80">GlitchTip, or anything Sentry-compatible → webhook</text>
+    <text x="436" y="80">email or chat → normaliser</text>
+  </g>
+
+  <g class="arrow">
+    <path d="M190 94 L190 116"/><path d="M184 114 L190 124 L196 114" stroke="none"/>
+    <path d="M570 94 L570 116"/><path d="M564 114 L570 124 L576 114" stroke="none"/>
+  </g>
+
+  <!-- Hullwork itself -->
+  <rect class="band" x="40" y="126" width="680" height="66" rx="4"/>
+  <text class="ink mono" x="56" y="153" font-size="16" font-weight="600">hullwork</text>
+  <text class="ink" x="176" y="153" font-size="15">triage · deduplicate · assign a risk lane</text>
+  <text class="faint" x="56" y="177" font-size="13">
+    one fingerprint per fault, so the fortieth occurrence is not the fortieth item
+  </text>
+
+  <g class="arrow"><path d="M380 192 L380 214"/><path d="M374 212 L380 222 L386 212" stroke="none"/></g>
+
+  <!-- The lane decides what may happen next, and two of the three answers stop here. -->
+  <rect class="box" x="40" y="224" width="680" height="74" rx="4"/>
+  <text class="faint" x="56" y="248" font-size="13" letter-spacing="0.06em">A WORK ITEM, WITH A LANE</text>
+  <g font-size="14">
+    <text class="ok" x="56" y="274" font-weight="600">green</text>
+    <text class="muted" x="112" y="274">attempted unattended</text>
+    <text class="warn" x="288" y="274" font-weight="600">amber</text>
+    <text class="muted" x="344" y="274">waits for your approval</text>
+    <text class="bad" x="524" y="274" font-weight="600">red</text>
+    <text class="muted" x="564" y="274">never attempted at all</text>
+  </g>
+  <text class="faint" x="56" y="292" font-size="12.5">anything matching no lane is red, so the default is refusal</text>
+
+  <g class="arrow"><path d="M84 298 L84 322"/><path d="M78 320 L84 330 L90 320" stroke="none"/></g>
+  <text class="ok" x="100" y="318" font-size="12.5">green only</text>
+
+  <!-- The attempt -->
+  <rect class="box" x="40" y="330" width="680" height="58" rx="4"/>
+  <text class="ink" x="56" y="354" font-size="14.5">a coding agent, in a sandbox, with your model key</text>
+  <text class="faint" x="56" y="375" font-size="13">
+    one attempt · a test that fails before the change and passes after, or nothing is opened
+  </text>
+
+  <g class="arrow"><path d="M380 388 L380 404"/><path d="M374 402 L380 412 L386 402" stroke="none"/></g>
+
+  <!-- The gate, which is the product -->
+  <rect class="gate" x="40" y="412" width="440" height="52" rx="4"/>
+  <text class="ink" x="56" y="435" font-size="15" font-weight="600">a draft pull request — and a person merges it</text>
+  <text class="faint" x="56" y="455" font-size="13">always, with nothing in here that can do it for them</text>
+
+  <g class="arrow"><path d="M480 438 L512 438"/><path d="M510 432 L520 438 L510 444" stroke="none"/></g>
+
+  <rect class="box" x="528" y="412" width="192" height="52" rx="4"/>
+  <text class="ink" x="544" y="435" font-size="14.5">your own pipeline</text>
+  <text class="faint" x="544" y="455" font-size="13">deploys, as it already did</text>
+</svg>

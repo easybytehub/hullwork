@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 300" width="1280" height="300"
+     role="img" aria-labelledby="t d">
+  <title id="t">Hullwork — from production errors to reviewable draft pull requests</title>
+  <desc id="d">The Hullwork wordmark beside its mark: two filled quadrants, diagonally opposed. Under
+    it, the promise — from production errors to reviewable draft pull requests, self-hosted, with your
+    forge, your error tracker, your model endpoint and a human gate on every merge. Along the bottom,
+    the three counts from one real attempt: 904 passed untouched, 2 failed with the new test and no
+    fix, 906 passed with the fix applied.</desc>
+
+  <!-- **The card carries its own background**, rather than relying on the reader's page. GitHub
+       renders this over light or dark depending on a setting nobody here controls, and a banner that
+       disappears in one of them is worse than no banner. The media query still adapts it when the
+       viewer honours one; the default is light, so a viewer that does not still gets a legible card.
+
+       No gradient, no illustration, no hero art — the interface document rules those out and the
+       reason holds: this product's whole claim is that its evidence is checkable, so the front of it
+       should look like an instrument. What sits under the promise is therefore a **reading**, three
+       real counts from one real attempt, and not a slogan. -->
+  <style>
+    .bg    { fill: #fcfcfd; }
+    .edge  { fill: none; stroke: #e2e5ea; stroke-width: 1.25; }
+    .mark  { fill: #15171c; }
+    .word  { fill: #15171c; }
+    .ink   { fill: #15171c; }
+    .muted { fill: #5d6470; }
+    .faint { fill: #868d99; }
+    .ok    { fill: #12693a; }
+    .bad   { fill: #a32f26; }
+    .rule  { stroke: #e2e5ea; stroke-width: 1.25; fill: none; }
+    text   { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .mono  { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+    @media (prefers-color-scheme: dark) {
+      .bg    { fill: #0f1115; }
+      .edge  { stroke: #262a31; }
+      .mark  { fill: #e7e9ee; }
+      .word  { fill: #e7e9ee; }
+      .ink   { fill: #e7e9ee; }
+      .muted { fill: #98a0ad; }
+      .faint { fill: #6f7783; }
+      .ok    { fill: #4fb37d; }
+      .bad   { fill: #ec7d70; }
+      .rule  { stroke: #262a31; }
+    }
+  </style>
+
+  <rect class="bg" width="1280" height="300"/>
+  <rect class="edge" x="0.6" y="0.6" width="1278.8" height="298.8"/>
+
+  <!-- The mark: two quadrants of one square, diagonally opposed, sharing no edge. U+259A, and the
+       product's own shape — two programs, disjoint credentials, no call between them. -->
+  <g class="mark" transform="translate(72, 74)">
+    <rect x="0" y="0" width="25" height="25" rx="2.5"/>
+    <rect x="29" y="29" width="25" height="25" rx="2.5"/>
+  </g>
+
+  <text class="word mono" x="150" y="118" font-size="52" font-weight="600" letter-spacing="-0.02em">hullwork</text>
+
+  <text class="ink" x="74" y="176" font-size="25">From production errors to reviewable <tspan font-weight="600">draft</tspan> pull requests.</text>
+  <text class="muted" x="74" y="208" font-size="18">
+    Self-hosted · your forge · your error tracker · your model endpoint · a human gate on every merge
+  </text>
+
+  <line class="rule" x1="74" y1="238" x2="1206" y2="238"/>
+
+  <!-- A reading rather than a slogan: the three counts from the attempt written up in
+       docs/an-attempt-end-to-end.md, which is a document anybody can check against the code. -->
+  <g font-size="17">
+    <text class="faint" x="74" y="270" font-size="14" letter-spacing="0.06em">ONE REAL ATTEMPT</text>
+    <text class="ink mono" x="236" y="270">904 passed</text>
+    <text class="faint" x="352" y="270" font-size="14">the suite, untouched</text>
+    <text class="bad mono" x="524" y="270">2 failed</text>
+    <text class="faint" x="620" y="270" font-size="14">the new test, no fix — exit 1, as required</text>
+    <text class="ok mono" x="908" y="270">906 passed</text>
+    <text class="faint" x="1024" y="270" font-size="14">the fix applied</text>
+  </g>
+</svg>
