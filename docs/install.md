@@ -93,10 +93,10 @@ is the half that answers webhooks. Nothing here can push to anything.
 curl -O https://raw.githubusercontent.com/easybytehub/hullwork/main/docker-compose.yml
 docker compose up -d
 curl http://127.0.0.1:8000/health
-# {"status":"ok","version":"0.1.0a4"}
+# {"status":"ok","version":"0.1.0a5"}
 ```
 
-The image is `ghcr.io/easybytehub/hullwork:0.1.0a4`, built for amd64 and arm64, pinned in that compose
+The image is `ghcr.io/easybytehub/hullwork:0.1.0a5`, built for amd64 and arm64, pinned in that compose
 file rather than floating on `latest`. From a clone, `docker compose up -d --build` builds your own
 instead — which is what you want if you are testing a change.
 
