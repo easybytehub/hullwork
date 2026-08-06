@@ -1,0 +1,51 @@
+# Automated dependency proposals. OpenSSF Scorecard's Dependency-Update-Tool, and the reason it is a
+# check: a project that pins everything and never bumps anything has traded one risk for another.
+#
+# **This file only exists on the public mirror**, because it is a GitHub feature and the primary forge
+# is Forgejo. `scripts/publish.sh` copies it as-is; nothing in the private repository reads it.
+#
+# Proposals, never merges. Everything lands the same way anything lands here: a pull request, the
+# gates green, a person taking it. A bot that could merge its own bump would undo the rule this
+# repository was just given.
+version: 2
+updates:
+  # **The one that matters most, and the reason is item 147's mirror failure.** Every action is
+  # pinned to a full commit SHA (the public forge refuses anything else, and a test enforces it), so
+  # nothing here moves on its own — which is safe and stale in the same breath. This proposes the
+  # move, with the release notes attached, and asks somebody to read them.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "actions"
+
+  # The base image, pinned by digest for the same reason and stale for the same reason. A digest bump
+  # is a Debian security update most weeks, which is exactly the class nobody notices manually.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "image"
+
+  # Runtime and development dependencies from `pyproject.toml`.
+  #
+  # Grouped on purpose: `mypy`, `ruff` and `pytest` moving separately is three pull requests a week
+  # whose diff is a version number, and three pull requests a week nobody reads is worse than one
+  # somebody does. The runtime group stays separate, because a FastAPI or SQLAlchemy bump is a change
+  # to what this thing does rather than to how it is checked.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      development:
+        dependency-type: development
+      runtime:
+        dependency-type: production

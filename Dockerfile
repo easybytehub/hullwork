@@ -1,7 +1,12 @@
 # syntax=docker/dockerfile:1
 
 # --- build: resolve dependencies into a self-contained virtualenv -------------
-FROM python:3.12-slim AS build
+#
+# **Pinned by digest, not by tag** (OpenSSF Scorecard, Pinned-Dependencies). `python:3.12-slim` is a
+# pointer somebody else moves: two builds of the same commit can differ, which makes a reproducible
+# build a coincidence. The digest is the manifest list, so buildx still picks amd64 or arm64 by
+# itself. Dependabot proposes the bump; a human takes it.
+FROM python:3.12-slim@sha256:646fb0bca3dd3ea1bcc6feb72c17ed16eed6e10cffc732fcc1478bd3e7f02d7b AS build
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
@@ -18,7 +23,7 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install ".${EXTRAS}"
 
 # --- runtime: no build tools, no source tree, no root ------------------------
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim@sha256:646fb0bca3dd3ea1bcc6feb72c17ed16eed6e10cffc732fcc1478bd3e7f02d7b AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

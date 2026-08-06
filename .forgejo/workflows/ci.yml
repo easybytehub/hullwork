@@ -16,6 +16,13 @@ on:
     branches: [main]
   pull_request:
 
+# **Least privilege, declared** (OpenSSF Scorecard's Token-Permissions, and the reason it is a check).
+# Nothing here writes anything: it installs, lints, types and tests. A workflow that inherits write
+# access is a workflow whose compromise can push — and this one runs code from a pull request, which
+# is the one place the code is not ours yet.
+permissions:
+  contents: read
+
 jobs:
   gates:
     runs-on: ubuntu-latest
