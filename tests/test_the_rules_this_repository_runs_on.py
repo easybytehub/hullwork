@@ -75,20 +75,36 @@ def test_the_ci_workflow_can_only_read() -> None:
         assert _loaded(path)["permissions"] == {"contents": "read"}, f"{name} wants more than read"
 
 
-def test_only_the_workflows_that_publish_may_write() -> None:
-    """A `write` scope is a claim about what a workflow is for, so the list is enumerated.
+def test_no_workflow_asks_for_write_at_the_top_level() -> None:
+    """**Measured, not assumed: this scored 0/10.** Scorecard ran on 2026-08-06 and answered
+    *"detected GitHub workflow tokens with excessive permissions"* for a repository whose every
+    workflow already declared a `permissions:` block — because two of them declared `write` at the
+    **top**, which grants it to every job in the file including future ones that only read.
 
-    The point is not that these are safe. It is that a fourth workflow appearing with
-    `packages: write` fails a test rather than passing review.
+    The blast radius of a compromised step is what this measures, and a top-level grant makes it the
+    whole workflow.
     """
-    allowed = {"release.yml", "edge.yml", "codeql.yml"}
+    for path in WORKFLOWS:
+        top = _loaded(path)["permissions"]
+        assert isinstance(top, dict)
+        writes = {scope for scope, level in top.items() if level == "write"}
+        assert not writes, f"{path.name} grants {sorted(writes)} to every job in the file"
+
+
+def test_the_jobs_that_publish_are_the_only_ones_that_may_write() -> None:
+    """The other half: `write` is a claim about what a job is for, so the list is enumerated. A
+    fourth workflow appearing with `packages: write` fails a test rather than passing review.
+    """
+    allowed = {"release.yml", "edge.yml", "codeql.yml", "scorecard.yml"}
 
     for path in WORKFLOWS:
-        scopes = _loaded(path)["permissions"]
-        assert isinstance(scopes, dict)
-        writes = {scope for scope, level in scopes.items() if level == "write"}
-        if writes:
-            assert path.name in allowed, f"{path.name} wants {sorted(writes)} and publishes nothing"
+        for job in _loaded(path)["jobs"].values():
+            scopes = job.get("permissions") or {}
+            writes = {scope for scope, level in scopes.items() if level == "write"}
+            if writes:
+                assert path.name in allowed, (
+                    f"{path.name} asks for {sorted(writes)} and publishes nothing"
+                )
 
 
 # --------------------------------------------------------------------------------------------
@@ -113,6 +129,11 @@ def test_both_published_artefacts_get_provenance() -> None:
     assert "push-to-registry: true" in release, (
         "an attestation only in this repository is one a stranger with the image cannot find"
     )
+    # **The bundle has to be a release asset, and this is why.** Scorecard's Signed-Releases scored
+    # 0/10 with the attestations already working, because it reads a release's *assets* and GitHub
+    # stores attestations out of band. So the signature travels twice.
+    assert "dist/*.intoto.jsonl" in release, "the provenance is not attached to the release"
+    assert "steps.provenance.outputs.bundle-path" in release
     for scope in ("id-token: write", "attestations: write"):
         assert scope in release, f"attestation needs {scope}"
 
@@ -221,4 +242,26 @@ def test_publishing_no_longer_prints_a_force_push() -> None:
     assert "ruff check" in script and "pytest" in script, (
         "the gates run in the derived tree before the pull request, because a derivation can fail "
         "checks its source passed"
+    )
+
+
+def test_the_score_comes_from_the_tool_and_is_published() -> None:
+    """**The item's own open question, closed.** Reading the checks and grading yourself does not
+    work: the table written from that reading said Token-Permissions and Signed-Releases were done,
+    and the tool answered 0/10 for both.
+
+    So the score is computed by something we do not control, weekly, and published where anybody can
+    look it up — a score only we can read is the kind of claim this repository exists to distrust.
+    """
+    path = ROOT / ".github/workflows/scorecard.yml"
+    text = path.read_text(encoding="utf-8")
+    loaded = _loaded(path)
+
+    assert "ossf/scorecard-action@" in text, "the score has to come from their action, not from us"
+    assert "publish_results: true" in text
+    assert "upload-sarif" in text, "findings belong in the security tab beside CodeQL's"
+    triggers = _triggers(loaded)
+    assert "schedule" in triggers, "the checks improve without this repository changing"
+    assert "pull_request" not in triggers, (
+        "a branch cannot change the repository settings this measures, so a PR run would be noise"
     )

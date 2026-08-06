@@ -19,11 +19,9 @@ on:
   push:
     branches: [main]
 
+# Read at the top, write on the job. See `release.yml` for why Scorecard makes this a check.
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
 
 # One build at a time, and a newer push wins. Two publications a minute apart used to mean two builds
 # racing for the same tag, and whichever finished last defined `edge` — which is a coin toss dressed
@@ -36,6 +34,11 @@ jobs:
   build:
     if: github.repository == 'easybytehub/hullwork'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 

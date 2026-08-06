@@ -23,16 +23,12 @@ on:
   push:
     tags: ["v*"]
 
+# **Read at the top, write on the job that needs it** — and this file scored **0/10** on Scorecard's
+# Token-Permissions until it did. The rule is not decoration: a top-level `packages: write` is granted
+# to *every* job in the file, including any future one that only needs to read, so the blast radius of
+# a compromised step is the whole workflow rather than the step.
 permissions:
-  contents: write        # create the release, attach the wheel
-  packages: write        # push the image to ghcr.io
-  # **Provenance, and the two permissions it needs** (OpenSSF Scorecard's Signed-Releases). Neither
-  # is a signing key: GitHub mints a short-lived OIDC token for this run, signs with it, and records
-  # the attestation publicly. So there is no key to store, rotate or lose — and what the signature
-  # says is *which commit, which workflow and which runner produced this artefact*, which is the only
-  # question a stranger pulling our image can actually check.
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
   publish:
@@ -40,6 +36,16 @@ jobs:
     # otherwise fail there on every release for no reason.
     if: github.repository == 'easybytehub/hullwork'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create the release, attach the wheel and its provenance
+      packages: write      # push the image to ghcr.io
+      # **Provenance, and the two permissions it needs.** Neither is a signing key: GitHub mints a
+      # short-lived OIDC token for this run, signs with it, and records the attestation publicly. So
+      # there is nothing to store, rotate or lose — and what the signature says is *which commit,
+      # which workflow and which runner produced this artefact*, the only question a stranger pulling
+      # our image can actually check.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
@@ -119,7 +125,13 @@ jobs:
 
       # **Provenance for both artefacts, before the release exists.** In this order on purpose: an
       # attestation that arrives after the release is one that somebody could have downloaded without.
+      # **The bundle is attached to the release, and that is the whole point of `id: provenance`.**
+      # Scorecard's Signed-Releases scored **0/10** with the attestations already in place, because it
+      # reads a release's *assets* — and GitHub stores attestations out of band, where a tool looking
+      # at the release cannot see them. So the same signature travels twice: in GitHub's own
+      # attestation store, and as a file anybody can check without trusting this repository's API.
       - name: Attest the wheel
+        id: provenance
         uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
         with:
           subject-path: dist/*.whl
@@ -140,7 +152,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           STABLE: ${{ steps.version.outputs.stable }}
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
         run: |
           flags=(--verify-tag --title "$GITHUB_REF_NAME" --notes-from-tag)
           [ "$STABLE" = "true" ] || flags+=(--prerelease)
-          gh release create "$GITHUB_REF_NAME" "${flags[@]}" dist/*.whl
+          # The provenance beside the wheel, named so it is obvious what it is.
+          cp "$PROVENANCE" "dist/$GITHUB_REF_NAME.intoto.jsonl"
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}" dist/*.whl dist/*.intoto.jsonl
