@@ -16,14 +16,20 @@ Two rules, and everything below is the reasoning behind them.
 | `v0.1.0aN` | a tag, deliberately | a person |
 | `latest` | only a plain `N.N.N`, and there is not one yet | nobody, for now |
 
-The branch rules are a **ruleset** on `main`: a pull request is required, the `gates` check must pass,
-force pushes are blocked, deletion is blocked, history stays linear. That is
-[OpenSSF Scorecard](https://github.com/ossf/scorecard/blob/main/docs/checks.md)'s Branch-Protection at
-tier 3 of 5.
+The branch rules are a **ruleset** on `main`: a pull request is required, the `gates` and `dco` checks
+must pass, force pushes are blocked, deletion is blocked, history stays linear, and there are no bypass
+actors — including the maintainer. Release tags (`v*`) cannot be deleted, updated or force-moved
+either, because a moved tag makes every provenance statement about it a lie.
 
-**Approvals are not required, and pretending otherwise would be worse.** Tier 4 wants a second
-reviewer; there are two people here and one of them has no hours, so a required approval would be a
-rule satisfied by clicking a bypass button — which is worse than a rule that says what it does. What
+[OpenSSF Scorecard](https://github.com/ossf/scorecard/blob/main/docs/checks.md) scores that
+**Branch-Protection 4/10**, and the reason is worth stating rather than rounding up: its tiers are
+cumulative, tier 2 wants a required reviewer, and we do not require one. So 4 is the ceiling of that
+choice — not a gap to close by configuration.
+
+**Approvals are not required, and pretending otherwise would be worse.** Tier 2 wants one reviewer;
+there are two people here, one of them has no hours, and GitHub does not let a pull request's author
+approve it — so a required approval would be either a permanent block or a rule satisfied by clicking
+bypass, which is worse than a rule that says what it does. What
 *is* enforced is that no change reaches `main` without a pull request and green gates, and that
 nobody can rewrite history to hide one. When there is a second maintainer with time, the rule moves up
 a tier and this paragraph gets deleted.
@@ -62,6 +68,27 @@ A version tag is for a state somebody else might pin. In practice:
 Pre-alpha versions are `0.1.0aN`. `latest` deliberately does not move for them: somebody typing
 `docker pull …:latest` a year from now should not silently land on the first alpha ever published.
 
+## What the tool says, not what we say
+
+The score is computed weekly by
+[Scorecard](https://github.com/ossf/scorecard/blob/main/docs/checks.md) itself and published, so it can
+be looked up rather than believed. When it last ran: **6.3/10**.
+
+Ten out of ten, unprompted: SAST, Dangerous-Workflow, Vulnerabilities, Packaging, Binary-Artifacts,
+Dependency-Update-Tool, CI-Tests, Security-Policy, Token-Permissions.
+
+The low ones, with the reason each stays low:
+
+| | why |
+|---|---|
+| Branch-Protection 4 | no required reviewer, deliberately — see above |
+| Code-Review 0 | the same choice, counted from the other side |
+| Signed-Releases 0 | fixed and unproven: the check reads existing releases, none of which carries the bundle yet |
+| Pinned-Dependencies 6 | the application install is not hash-pinned; `uv.lock` does not reproduce a green suite yet |
+| Maintained 0 | the repository is younger than ninety days |
+| License 9 | source-available rather than OSI-approved |
+| Fuzzing 0 · Contributors 3 · CII-Best-Practices 0 | none of them is bought with configuration |
+
 ## What a release produces
 
 * a wheel, attached to the GitHub release;
@@ -71,9 +98,13 @@ Pre-alpha versions are `0.1.0aN`. `latest` deliberately does not move for them: 
 Verify either one without trusting us:
 
 ```bash
-gh attestation verify oci://ghcr.io/easybytehub/hullwork:0.1.0a4 -R easybytehub/hullwork
-gh attestation verify hullwork-0.1.0a4-py3-none-any.whl        -R easybytehub/hullwork
+gh attestation verify oci://ghcr.io/easybytehub/hullwork:<version> -R easybytehub/hullwork
+gh attestation verify hullwork-<version>-py3-none-any.whl         -R easybytehub/hullwork
 ```
+
+**From the next release onwards.** `0.1.0a1` through `a4` were published before any of this existed
+and carry no provenance; saying otherwise would be the exact kind of claim these rules are here to
+stop. Scorecard's Signed-Releases still reads 0/10 for that reason, and will move on its own.
 
 What that proves is *which commit, which workflow and which runner produced this artefact*. It does
 not prove the artefact is good — that is what the gates and `docs/status.md` are for.
@@ -81,9 +112,10 @@ not prove the artefact is good — that is what the gates and `docs/status.md` a
 ## Cutting one
 
 ```bash
-./scripts/publish.sh                 # build the public tree, open the pull request
-# merge it once the gates are green
-git tag -a v0.1.0aN -m "…"           # the annotation is the release notes
+./scripts/publish.sh                     # build the public tree and read the diff
+./scripts/publish.sh --pr MESSAGE_FILE   # gate it, then open the pull request
+gh pr merge <branch> --squash --delete-branch    # once the checks are green
+git tag -a v0.1.0aN -m "…"               # the annotation is the release notes
 git push origin v0.1.0aN
 ```
 
