@@ -265,7 +265,12 @@ def test_the_score_comes_from_the_tool_and_is_published() -> None:
 
     assert "ossf/scorecard-action@" in text, "the score has to come from their action, not from us"
     assert "publish_results: true" in text
-    assert "upload-sarif" in text, "findings belong in the security tab beside CodeQL's"
+    # **And deliberately NOT into code scanning**, which is a correction to the first version. Six
+    # policy scores in the tab meant for code defects — several unfixable by design, since
+    # `Maintained` measures the repository's age — buried a real `error`-level CodeQL finding in a
+    # list of a hundred entries nobody could act on.
+    assert "upload-sarif" not in text, "policy scores are not code defects"
+    assert "upload-artifact" in text, "keep the detail readable without parking it in that tab"
     triggers = _triggers(loaded)
     assert "schedule" in triggers, "the checks improve without this repository changing"
     assert "pull_request" not in triggers, (

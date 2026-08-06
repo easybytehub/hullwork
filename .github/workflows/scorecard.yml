@@ -10,9 +10,19 @@
 # Both are fixed. What is kept is the habit: the number comes from something we do not control, on a
 # schedule, whether or not anybody remembers to ask.
 #
-# The findings upload as SARIF, so they appear in the security tab beside CodeQL's, and the score is
-# published to the OpenSSF's public API — which is the point of `publish_results`. A score nobody else
-# can read is a claim again.
+# The score is published to the OpenSSF's public API — the point of `publish_results`, since a score
+# only we can read is a claim again.
+#
+# **What it deliberately does NOT do is upload its findings to code scanning**, and that is a
+# correction. The first version did, and the security tab then listed six permanent entries —
+# `BranchProtectionID`, `CodeReviewID`, `MaintainedID`, `FuzzingID`, `CIIBestPracticesID`,
+# `PinnedDependenciesID` — which are not defects in the code. They are the policy scores this project
+# already documents in `docs/releasing.md`, several of them unfixable by design: `Maintained` measures
+# the repository's age, `CodeReview` measures a decision about approvals we made on purpose.
+#
+# Mixing them in there cost something real: a genuine `error`-level CodeQL finding sat in a list of a
+# hundred entries, ninety-eight of which nobody could act on. A security tab that cannot be emptied is
+# a security tab nobody reads.
 name: scorecard
 
 on:
@@ -33,8 +43,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # Findings into the security tab, beside CodeQL's.
-      security-events: write
       # What `publish_results` signs with. No key of ours, same as the release attestations.
       id-token: write
     steps:
@@ -50,6 +58,10 @@ jobs:
           # computed, and the only version of that worth having is the one anybody can look up.
           publish_results: true
 
-      - uses: github/codeql-action/upload-sarif@c3400c2f38909e0dcf3c3a41f2030a8217be5d3e  # v3
+      # The SARIF is kept as a run artefact rather than uploaded: readable when somebody wants the
+      # detail, and not sitting permanently in the tab meant for code defects.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
-          sarif_file: results.sarif
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 30

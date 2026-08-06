@@ -770,11 +770,6 @@ def _with_companions(proposal: Proposal, present: set[str], recipe: str | None =
 _INSTALLS_THE_PROJECT = re.compile(r"^\s*(-e\s+\.|\.|-e\s+file:)", re.MULTILINE)
 
 
-#: Flags that change **which** artefacts a Maven build needs, and therefore which ones have to be
-#: on disk before the network goes away. Item 112.
-_MAVEN_SELECTORS = ("--activate-profiles", "-P", "--projects", "-pl")
-
-
 def _resolving_what_the_tests_will_run(recipe: str, tests: str | None) -> str:
     """The install command, carrying the selectors the test command uses. Item 112.
 

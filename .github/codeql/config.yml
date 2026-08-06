@@ -1,0 +1,26 @@
+# What CodeQL analyses, and the one directory it does not.
+#
+# **Measured on the first run: 100 alerts, of which 3 were real.** The rest were one rule —
+# `py/unused-global-variable` — firing 89 times on `migrations/versions/`, because every Alembic
+# migration declares four module-level names its framework reads by name:
+#
+#     revision · down_revision · branch_labels · depends_on
+#
+# Nothing in the file uses them, and nothing should: Alembic imports the module and looks them up.
+# So the rule is right about the code and wrong about the world, 89 times, growing by four with every
+# migration this project ever writes.
+#
+# **The cost of this exclusion, stated rather than buried**: migrations are no longer analysed at all,
+# and they do contain `op.execute()` with SQL of ours. That SQL is reviewed in the pull request that
+# adds it, which is a person rather than a tool — a weaker guarantee, and the honest trade for a
+# security tab where the one real finding is visible instead of ninetieth in a list.
+#
+# The three real ones the same rule found on the same run are worth recording, because they are the
+# reason the quality suite stays on for everything else: `_PYTEST`, `_MAVEN_SELECTORS` and
+# `_CABLE_PROGRAM` were all fossils of superseded designs, and two of them *contradicted* the comment
+# beside the code that replaced them. In a codebase whose whole habit is explaining why, a tool found
+# three explanations that had outlived their subject.
+name: hullwork
+
+paths-ignore:
+  - migrations/versions
