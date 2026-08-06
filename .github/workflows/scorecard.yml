@@ -1,0 +1,55 @@
+# The score, from the tool rather than from us.
+#
+# **This exists because reading the checks and grading yourself does not work.** On 2026-08-06 this
+# repository's rules were rewritten against Scorecard's own list, and my reading of where we stood was
+# written down as a table. Then the tool ran: **5.7/10**, and it disagreed in two places I had marked
+# as done — Token-Permissions at **0/10** because two workflows declared `write` at the top level
+# rather than per job, and Signed-Releases at **0/10** because it reads a release's *assets* and
+# GitHub stores attestations out of band, where a tool looking at the release cannot see them.
+#
+# Both are fixed. What is kept is the habit: the number comes from something we do not control, on a
+# schedule, whether or not anybody remembers to ask.
+#
+# The findings upload as SARIF, so they appear in the security tab beside CodeQL's, and the score is
+# published to the OpenSSF's public API — which is the point of `publish_results`. A score nobody else
+# can read is a claim again.
+name: scorecard
+
+on:
+  # A pull request cannot run this: the analysis needs a token with repository metadata and the
+  # results are about the repository's *settings*, which a branch cannot change. So: on `main`, and
+  # weekly, because the checks themselves improve without this repository changing.
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyse:
+    if: github.repository == 'easybytehub/hullwork'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Findings into the security tab, beside CodeQL's.
+      security-events: write
+      # What `publish_results` signs with. No key of ours, same as the release attestations.
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+
+      - uses: ossf/scorecard-action@55891bbd73f2425e97637d96e306fc9d491d0b21  # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Public, deliberately. The score is a claim about this repository that somebody else
+          # computed, and the only version of that worth having is the one anybody can look up.
+          publish_results: true
+
+      - uses: github/codeql-action/upload-sarif@c3400c2f38909e0dcf3c3a41f2030a8217be5d3e  # v3
+        with:
+          sarif_file: results.sarif
