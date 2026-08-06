@@ -59,6 +59,7 @@ from __future__ import annotations
 import json
 import logging
 import platform
+import re
 import secrets
 import sys
 import threading
@@ -69,14 +70,17 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
-
-from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING, Any
 
 from hullwork import __version__
-from hullwork.models import Attempt, Installation, Item, Project
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+# **Nothing heavy at module scope, and that is load-bearing** (item 154). The relay that receives
+# these payloads imports `why_not_a_payload` from here to enforce the same enumeration, and it runs
+# on the public interface — so it installs this package with `--no-deps` and must not need an ORM to
+# check the shape of a dict. `installation_id` and `census` import theirs where they use them.
 
 log = logging.getLogger(__name__)
 
@@ -127,6 +131,9 @@ OURS = "hullwork"
 #: still bounds the payload: an unbounded list is an unbounded upload, on somebody else's bandwidth.
 FRAME_CEILING = 20
 
+#: What an installation identifier looks like: `secrets.token_hex(16)` and nothing else.
+_HEX_32 = re.compile(r"[0-9a-f]{32}")
+
 
 @dataclass(frozen=True)
 class Instance:
@@ -163,6 +170,10 @@ def installation_id(session: Session, *, mint: bool = True) -> str | None:
     together under compose — so the insert races. Losing the race is not an error: the winner's row
     is the answer, which is why this re-reads instead of retrying.
     """
+    from sqlalchemy.exc import IntegrityError
+
+    from hullwork.models import Installation
+
     row = session.get(Installation, 1)
     if row is not None:
         return row.identifier
@@ -195,6 +206,10 @@ def census(session: Session) -> dict[str, int]:
     is a scan, so *once* is the part that matters; an instance where four counts are slow is an
     instance whose crash we want to hear about anyway.
     """
+    from sqlalchemy import func, select
+
+    from hullwork.models import Attempt, Item, Project
+
     return {
         "projects": int(session.scalar(select(func.count()).select_from(Project)) or 0),
         "items": int(session.scalar(select(func.count()).select_from(Item)) or 0),
@@ -363,6 +378,102 @@ def destination(settings: Any) -> str | None:  # noqa: ANN401 - Settings, withou
         return None
     value = str(dsn.get_secret_value() if hasattr(dsn, "get_secret_value") else dsn).strip()
     return value or None
+
+
+#: The longest any string in a payload may be. Every one of them is a class name, a module path, a
+#: version or a hex identifier; nothing legitimate comes near this, and a sentence would.
+STRING_CEILING = 200
+
+#: **What each string field is shaped like, and a length ceiling is not enough.** Found by the test
+#: that tries to smuggle a message: `"KeyError: 'currency' in acme.billing"` is forty characters, so
+#: it passed a *"short string"* check while carrying a customer's module and an interpolated value.
+#:
+#: A class name has no spaces, no colons and no quotes; a version has no spaces; a platform is one
+#: word. Each field is matched against the thing it is, and prose fails every one of them.
+_SHAPES = {
+    # `type(exc).__name__`, so a Python identifier, optionally dotted for a nested class.
+    "exception": re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}(\.[A-Za-z_][A-Za-z0-9_]{0,62}){0,4}"),
+    # A version from the package, or a commit sha if a fork's build says so.
+    "release": re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}"),
+    # `platform.python_version()`.
+    "python": re.compile(r"\d{1,2}\.\d{1,2}\.\d{1,3}[a-z0-9+.]{0,12}"),
+    # `sys.platform`: `linux`, `darwin`, `win32`.
+    "platform": re.compile(r"[a-z][a-z0-9]{0,15}"),
+    # Checked against `OPERATIONS` below as well; this only bounds what the check has to look at.
+    "operation": re.compile(r"[a-z][a-z0-9:_-]{0,31}"),
+}
+
+#: What to call each of those in a refusal, because `_SHAPES` reads as noise in a message.
+_WHAT_IT_IS = {
+    "exception": "class name",
+    "release": "version",
+    "python": "Python version",
+    "platform": "platform",
+    "operation": "operation",
+}
+
+
+def why_not_a_payload(payload: object) -> str | None:
+    """Why this is not a payload this project would have produced, or `None` if it is one.
+
+    **The same enumeration, enforced twice** (item 154). `upstream_payload` builds the payload in
+    the sender, and the sender is code strangers run and can edit — so the whitelist is checked
+    again where events arrive. Without this, *"the payload cannot contain your data"* is a property
+    of a client, and a hand-made envelope full of somebody's email addresses could be laundered
+    through our ingest into our own tracker.
+
+    Here rather than in the relay so there is **one** enumeration. Two copies of a whitelist are two
+    whitelists, and the one nobody looks at is the one that drifts.
+
+    Returns a reason rather than a bool: the relay counts drops by reason, and *"why did that get
+    dropped"* is the question a counter has to answer to be worth keeping.
+    """
+    if not isinstance(payload, dict):
+        return f"not an object: {type(payload).__name__}"
+    if set(payload) != KEYS:
+        unexpected = sorted(set(payload) - KEYS)
+        missing = sorted(KEYS - set(payload))
+        return f"keys do not match: unexpected {unexpected}, missing {missing}"
+    if payload["schema"] != SCHEMA:
+        return f"schema {payload['schema']!r} is not {SCHEMA}"
+
+    for field, shape in _SHAPES.items():
+        value = payload[field]
+        if not isinstance(value, str) or not shape.fullmatch(value):
+            return f"{field} is not shaped like a {_WHAT_IT_IS[field]}: {value!r:.60}"
+    if payload["operation"] not in OPERATIONS and payload["operation"] != UNKNOWN:
+        return f"operation {payload['operation']!r} is not one of ours"
+
+    identifier = payload["installation"]
+    if identifier is not None and (
+        not isinstance(identifier, str) or not _HEX_32.fullmatch(identifier)
+    ):
+        return "installation is neither null nor 32 hexadecimal characters"
+
+    frames = payload["frames"]
+    if not isinstance(frames, list) or not frames or len(frames) > FRAME_CEILING:
+        return f"frames is not a list of 1 to {FRAME_CEILING}"
+    for frame in frames:
+        if not isinstance(frame, dict) or set(frame) != FRAME_KEYS:
+            return "a frame does not have exactly the three allowed keys"
+        module = frame["module"]
+        if not isinstance(module, str) or (module != OURS and not module.startswith(f"{OURS}.")):
+            # The rule that makes this worth enforcing here: a frame from outside our package is
+            # somebody else's code, and its module path is somebody else's business.
+            return f"a frame is not inside {OURS}: {module!r}"
+        if frame["function"] is not None and not isinstance(frame["function"], str):
+            return "a frame's function is neither null nor a string"
+        if frame["lineno"] is not None and not isinstance(frame["lineno"], int):
+            return "a frame's lineno is neither null nor an integer"
+
+    counts = payload["counts"]
+    if not isinstance(counts, dict) or set(counts) != COUNT_KEYS:
+        return "counts does not have exactly the four allowed keys"
+    for name, count in counts.items():
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            return f"counts.{name} is not a non-negative integer"
+
+    return None
 
 
 def notice(host: str) -> str:
