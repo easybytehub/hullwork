@@ -131,7 +131,11 @@ def test_the_relay_imports_the_enumeration_rather_than_copying_it() -> None:
         pytest.skip("the relay is not in this tree (it is withheld from publication)")
 
     text = relay.read_text(encoding="utf-8")
-    assert "from hullwork.upstream import why_not_a_payload" in text
+    # By name rather than by exact import line: the relay grew `as_event` beside the validator when
+    # it started re-rendering what it forwards, and pinning the whole line failed on that.
+    assert "from hullwork.upstream import" in text
+    assert "why_not_a_payload" in text
+    assert "as_event" in text, "the relay forwards the render, not the event that arrived"
     for copied in ("KEYS =", "COUNT_KEYS =", "FRAME_KEYS ="):
         assert copied not in text, f"the relay has its own copy of {copied}"
 
