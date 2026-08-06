@@ -15,7 +15,7 @@ and there is no tenth:
   "schema": 1,
   "exception": "ManifestError",
   "frames": [{"module": "hullwork.manifest", "function": "parse_manifest", "lineno": 707}],
-  "release": "0.1.0a3",
+  "release": "0.1.0a4",
   "python": "3.12.13",
   "platform": "linux",
   "operation": "receiver",
@@ -103,6 +103,9 @@ with the whole event and its secrets scrubbed, and neither of the two destinatio
 
 ## What happens to it
 
+* Sent to **`errors.easybyte.es`**, which is the only address involved and the only thing we expose
+  to the internet: a small relay that checks the payload's shape again on arrival and forwards it
+  inward. The tracker itself has no public address at all.
 * Stored in an error tracker we run, in the EU.
 * **Kept for 90 days**, then deleted.
 * Read by the two people who work on Hullwork, to fix Hullwork.

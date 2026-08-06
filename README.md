@@ -125,7 +125,7 @@ code, and writes nothing outside a directory you name. → above, and
 [docs/install.md § 1](docs/install.md#1-try-the-agent-half)
 
 **2. The evaluation stack — recommended for a first look.** Needs Docker and nothing else, with **no
-clone and no build**: one compose file and a published image (`ghcr.io/easybytehub/hullwork:0.1.0a3`,
+clone and no build**: one compose file and a published image (`ghcr.io/easybytehub/hullwork:0.1.0a4`,
 amd64 and arm64). One container — the half that answers webhooks — which starts with no credentials at
 all and says in a sentence what it cannot do yet.
 → [docs/install.md § 2](docs/install.md#2-the-evaluation-stack)
