@@ -27,6 +27,7 @@ Two rules the whole module obeys:
   aside.
 """
 
+import itertools
 import json
 import os
 import re
@@ -44,7 +45,7 @@ from sqlalchemy.orm import Session
 
 from hullwork.config import Settings
 from hullwork.forge import ForgeError
-from hullwork.models import Base, Item, ItemState, Project
+from hullwork.models import Base, Delivery, Item, ItemState, Project
 from hullwork.scaffold import belongs_to_one_half
 
 
@@ -1244,9 +1245,17 @@ def examine(
         findings.append(
             Finding("inventory", State.UNKNOWN, "not asked: the database cannot be queried.")
         )
+        findings.append(
+            Finding(
+                "deliveries",
+                State.UNKNOWN,
+                "not asked: when the last webhook arrived is a row in the database above.",
+            )
+        )
     else:
         findings.extend(code_token_reaches_repositories(session, code_forge))
         findings.extend(items_point_at_real_issues(session, issue_reader))
+        findings.extend(deliveries_are_still_arriving(session, settings))
     # **A check that ran and found nothing has to say so**, or the operator cannot tell it from a
     # check that is not there. `environment_gaps` returns gaps — an empty list means *compared, and
     # clean*, and every unreadable or absent file comes back as its own `UNKNOWN` finding above. So
@@ -1279,3 +1288,134 @@ def examine(
         )
     # Last, so every check has already answered for itself and this only reinterprets. Item 091.
     return not_from_here(findings, session)
+
+
+# --- the input nobody watches: deliveries ---------------------------------------------------
+
+
+#: How many past deliveries to read when deciding how quiet is too quiet. Enough to see a pattern,
+#: few enough to be one indexed query.
+_DELIVERY_HISTORY = 30
+
+#: The floor under any derived threshold. A project can legitimately go a week without an error, and
+#: an alarm that fires on a good week is an alarm somebody switches off.
+_QUIET_FLOOR_SECONDS = 7 * 86400
+
+#: The ceiling. Past a month, *"it used to arrive and now it does not"* is worth saying even for a
+#: project whose errors are rare — by then a rotation, a moved address or a broken route has had
+#: plenty of time to look like nothing at all.
+_QUIET_CEILING_SECONDS = 30 * 86400
+
+
+def _how_quiet_is_too_quiet(gaps: list[float]) -> float:
+    """The longest silence that would still be normal for this project, from its own history.
+
+    **Derived rather than chosen**, because a fixed number is wrong in both directions at once: a
+    project with an error an hour is broken after a day of silence, and one with an error a month is
+    fine after three weeks. The longest gap this project has actually shown, doubled, then bounded.
+    """
+    if not gaps:
+        return _QUIET_FLOOR_SECONDS
+    return min(max(max(gaps) * 2, _QUIET_FLOOR_SECONDS), _QUIET_CEILING_SECONDS)
+
+
+def deliveries_are_still_arriving(session: Session, settings: Settings) -> list[Finding]:
+    """Whether the webhook path is still delivering, per project. Item 158.
+
+    **Nothing watched this, and it had been dead for a week.** Found on 2026-08-06 by following an
+    event that had reached the tracker and never became an item: the token the tracker held answered
+    `401`, and the tracker's container could not route to the receiver's address at all. Two
+    independent faults, and the last delivery on the instance was eight days old.
+
+    It was invisible because the **inventory sweep** covers for it — the sweep polls the tracker's
+    unresolved issues per project and had been filing items all along. So the loop kept working with
+    half its input gone, which is the shape this whole module exists to end: `status` says what has
+    happened, `doctor` says what is broken, and neither knew.
+
+    **Three answers, and the middle one is why this is not two.**
+
+    * *No tracker configured* → `expected`. Nothing is supposed to arrive, and saying so is not the
+      same as saying nothing is wrong.
+    * *Configured and nothing has ever arrived* → `unknown`. A project registered ten minutes ago
+      and one whose webhook was never pasted into the tracker look identical from here, and guessing
+      which would be inventing an answer.
+    * *Arrived, and then stopped for longer than this project's own history explains* → `broken`,
+      with both dates, because the useful sentence is *"it used to work"*.
+    """
+    projects = session.execute(
+        select(Project).where(Project.active.is_(True)).order_by(Project.slug)
+    ).scalars().all()
+    if not projects:
+        return [Finding("deliveries", State.OK, "no active project, so nothing is expected")]
+
+    tracker_configured = bool(settings.tracker_url)
+    now = datetime.now(UTC)
+    findings: list[Finding] = []
+
+    for project in projects:
+        received = list(
+            session.execute(
+                select(Delivery.received_at)
+                .where(Delivery.project_id == project.id)
+                .order_by(Delivery.received_at.desc())
+                .limit(_DELIVERY_HISTORY)
+            ).scalars().all()
+        )
+
+        if not tracker_configured and project.tracker_project is None:
+            findings.append(
+                Finding(
+                    "deliveries",
+                    State.EXPECTED,
+                    f"{project.slug}: no tracker configured, so no webhook is expected. Items "
+                    f"can still arrive through `hullwork` normalisers.",
+                )
+            )
+            continue
+
+        if not received:
+            findings.append(
+                Finding(
+                    "deliveries",
+                    State.UNKNOWN,
+                    f"{project.slug}: a tracker is configured and **no delivery has ever "
+                    f"arrived**. Either the webhook URL was never pasted into the tracker, or this "
+                    f"project was registered recently. `hullwork projects rotate-secret "
+                    f"{project.slug}` prints the URL again — the token cannot be shown twice.",
+                )
+            )
+            continue
+
+        # **No defence against naive datetimes here, and that is deliberate.** `UtcDateTime` refuses
+        # to *store* one — *"refusing to store a naive datetime; attach a timezone at the source"* —
+        # so a reader cannot be handed one, and a branch for it would be code that can never run
+        # pretending to be care. Found by a test written to exercise that branch, which could not
+        # create the row.
+        latest = received[0]
+        silence = (now - latest).total_seconds()
+        gaps = [(a - b).total_seconds() for a, b in itertools.pairwise(received)]
+        allowed = _how_quiet_is_too_quiet(gaps)
+
+        if silence > allowed:
+            findings.append(
+                Finding(
+                    "deliveries",
+                    State.BROKEN,
+                    f"{project.slug}: deliveries stopped. The last one arrived "
+                    f"{_span(silence)} ago ({latest.date()}), and this project has never been "
+                    f"quiet for more than {_span(allowed / 2)}. Two usual causes: a webhook token "
+                    f"rotated without updating the tracker, and a tracker that cannot reach this "
+                    f"address at all — check both, in that order. The inventory sweep keeps filing "
+                    f"items either way, which is why nothing else complained.",
+                )
+            )
+        else:
+            findings.append(
+                Finding(
+                    "deliveries",
+                    State.OK,
+                    f"{project.slug}: last delivery {_span(silence)} ago, within the "
+                    f"{_span(allowed)} this project's own history explains",
+                )
+            )
+    return findings

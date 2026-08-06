@@ -608,6 +608,49 @@ networks:
         - subnet: 172.18.0.0/16
 ```
 
+### The rule above is an `INPUT` rule, and the packet may not be an input
+
+**Measured on our own deployment, 2026-08-06, nine days after deliveries silently stopped.** The
+`ufw allow` rule was present and correct:
+
+```
+10.0.0.5 8000/tcp        ALLOW       172.18.0.0/16
+```
+
+and the socket test from inside the tracker's container still timed out — including the control test
+against the bridge gateway on a dead port, which is what this section says means *firewall*.
+
+`ufw allow` writes into `ufw-user-input`, and `iptables -L ufw-user-input -n` confirms the ACCEPT is
+there. What is also there:
+
+```
+DEFAULT_FORWARD_POLICY="DROP"
+Chain FORWARD (policy DROP)
+```
+
+`ufw route allow from 172.18.0.0/16 to 10.0.0.5 port 8000 proto tcp` — the `FORWARD` equivalent —
+was added and **did not fix it either**, so the drop is somewhere else again: Tailscale's own
+`ts-input` chain does not drop this source, and the host's routing table will not answer for a
+container source at all.
+
+**What this section can honestly tell you today**: the two-line diagnosis above (timeout versus
+refused) is right and the one-rule fix is not always enough. If both rules are in place and the
+timeout persists, the topology is the problem rather than a rule — a receiver on `network_mode: host`
+bound to a VPN address is reachable from the host and not necessarily from a container on a bridge,
+and the choices are all trade-offs:
+
+* **bind `0.0.0.0`** and let the firewall be the only thing between the webhook endpoint and the
+  internet — which this document argues against, for the reason it gives above;
+* **give the receiver a container address on the tracker's network**, which means giving up
+  `network_mode: host` and solving the outbound VPN route another way;
+* **use the inventory sweep as the input** and accept that webhooks do not arrive in this topology —
+  workable, and it is what our instance had been doing unknowingly for nine days.
+
+Whichever you pick, `hullwork doctor` now reports the state per project — *never configured*, *never
+arrived*, and *arrived and then stopped* — so the choice is at least visible. That check exists
+because this failure was invisible for nine days on the instance whose own documentation describes it.
+
+
 Add that with the stack **down**. `docker compose up -d` on a running stack recreates the network
 but leaves the existing containers attached to nothing usable: ours came back with no IP address at
 all and the web container crash-looped on `failed to lookup address information`, which reads like a
