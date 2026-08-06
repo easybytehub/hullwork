@@ -40,7 +40,10 @@ def test_a_warning_is_not_filed_and_an_error_is(monkeypatch: pytest.MonkeyPatch)
         seen.append(event)
         return None  # dropped: nothing leaves this process
 
-    monkeypatch.setattr(telemetry, "make_before_send", lambda _secrets: capture)
+    # `**_` so this double survives the hook growing an argument: it did on 2026-08-06, when
+    # `upstream=` arrived (item 152), and a stand-in that mirrors a signature exactly fails on a
+    # change that has nothing to do with what it is standing in for.
+    monkeypatch.setattr(telemetry, "make_before_send", lambda _secrets, **_: capture)
     try:
         assert telemetry.configure_error_reporting(Settings(error_dsn=SecretStr(DSN))) is True
 

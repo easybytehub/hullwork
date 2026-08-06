@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -2014,8 +2015,99 @@ def _cmd_config(args: argparse.Namespace, settings: Settings, out: TextIO) -> in
     """
     from hullwork import settings_report
 
+    if getattr(args, "telemetry", False):
+        return _cmd_config_telemetry(settings, out)
+
     for line in settings_report.lines(settings):
         print(line, file=out)
+    return 0
+
+
+def _cmd_config_telemetry(settings: Settings, out: TextIO) -> int:
+    """The exact bytes this instance would send upstream. Item 153.
+
+    **The project's own standard, applied to itself.** Everything else here refuses to guess on an
+    operator's behalf — *asked, not assumed*, `None ≠ 0 ≠ absent`, a claim is checkable or it is not
+    made. A prose description of a payload is exactly the kind of claim this product exists to
+    distrust, so the payload is printed instead.
+
+    Built from this instance's real state, not from an example: the identifier is the one in this
+    database, the counts are its rows, and the frames come from a live traceback of a crash raised
+    here — so the shape shown is the shape the machinery reads. When the database cannot be reached,
+    it says so and prints the rest, which is what a report from that instance would look like too.
+    """
+    from hullwork import upstream
+
+    destination_dsn = upstream.destination(settings)
+    if destination_dsn is None:
+        why = (
+            "declined with HULLWORK_TELEMETRY"
+            if settings.upstream_dsn is not None
+            else "this build has no destination in it"
+        )
+        print(f"Nothing is reported upstream: {why}.", file=out)
+        print(
+            "\nA destination exists only in the image published by the project's own release\n"
+            "workflow. A build made from a checkout has nowhere to send anything, and no test\n"
+            "in this repository would pass if one appeared in the source.",
+            file=out,
+        )
+        return 0
+
+    factory: Callable[[], Session] | None = None
+    with suppress(Exception):  # a report from an instance in this state is worth showing too
+        factory = make_session_factory(get_engine(settings.database_url))
+
+    destination = upstream.Destination(
+        destination_dsn, operation="cli:config", session_factory=factory
+    )
+    # **`mint=False`: asking what would be sent must not enrol anybody.** This command exists so a
+    # person can decide, and writing the row that identifies them as the price of checking would be
+    # the opposite of the point.
+    instance = destination.instance(mint=False)
+
+    print(upstream.notice(destination.host).strip(), file=out)
+    print(
+        f"\nThe payload for a crash right now, exactly as it would be sent to "
+        f"{destination.host}:\n",
+        file=out,
+    )
+
+    # A real exception, raised here, so the frames are read from a live traceback rather than typed.
+    try:
+        msg = "the crash this payload is for"
+        raise RuntimeError(msg)
+    except RuntimeError as raised:
+        event = upstream.event_for_a_crash_here(raised)
+
+    payload = upstream.upstream_payload(event, instance)
+    if payload is None:
+        # Not reachable from the raise above — the frame is inside `hullwork.cli` — but the
+        # constructor is allowed to refuse (item 151: an event with no frame of ours is not ours to
+        # send), and a command about honesty must not print `null` as if it were a payload.
+        print(
+            "Nothing would be sent for that crash: it has no frame inside Hullwork's own code, "
+            "so it is not Hullwork's defect to collect.",
+            file=out,
+        )
+        return 0
+
+    print(json.dumps(payload, indent=2, sort_keys=True), file=out)
+
+    if instance.installation is None:
+        print(
+            "\n`installation` is null: this instance has no identifier, because asking what\n"
+            "would be sent does not create one. It is sixteen random bytes in one row, written\n"
+            "the first time something is actually reported — nothing derived from this machine —\n"
+            "and all it does is tell forty crashes from one install from one crash from forty.",
+            file=out,
+        )
+    print(
+        f"\nThat is the whole of it: {len(json.dumps(payload))} bytes, "
+        f"{len(payload)} fields, no message.\n"
+        "HULLWORK_TELEMETRY=off stops it.",
+        file=out,
+    )
     return 0
 
 
@@ -2199,7 +2291,11 @@ def _work_loop(
     # instance for ever. Measured twice on the live instance, both times found by reading rather
     # than by the loop saying anything.
     # First, so a failure in anything below is itself reported — including the refusal underneath.
-    reporting = configure_error_reporting(settings)
+    # `dispatcher` is the label an upstream report is counted under, and the session this command
+    # already holds is where the installation's identifier is read from (item 152).
+    reporting = configure_error_reporting(
+        settings, operation="dispatcher", session_factory=lambda: session
+    )
     if reporting:
         print("Reporting this dispatcher's own errors to the configured tracker.", file=out)
 
@@ -2685,6 +2781,14 @@ def build_parser() -> argparse.ArgumentParser:
             "`doctor` says what is broken and `status` says what has happened. This says what the "
             "instance is — the question that, on 2026-08-04, took a session to answer by reading "
             "a compose file, an environment file and a container's environment side by side."
+        ),
+    )
+    configuring.add_argument(
+        "--telemetry",
+        action="store_true",
+        help=(
+            "print the exact payload this build would report upstream, built from this instance's "
+            "own state"
         ),
     )
     configuring.set_defaults(func=None, standalone=_cmd_config)

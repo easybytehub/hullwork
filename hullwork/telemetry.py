@@ -19,15 +19,23 @@ from places you did not.
 
 import json
 import logging
+import sys
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TextIO, cast
 
 from hullwork import __version__
+from hullwork import upstream as upstream_module
 from hullwork.config import ConfigError, Settings
 from hullwork.logging import REDACTED, SENSITIVE_NAME, TOKEN_IN_URL
+from hullwork.upstream import Destination
 
 log = logging.getLogger(__name__)
+
+#: The destination this process configured, so shutdown can wait for what is in flight. Module-level
+#: because `configure_error_reporting` is called once per process and its caller has nowhere to keep
+#: this — the same reason `main._reporting_enabled` exists beside it.
+_upstream: Destination | None = None
 
 #: Shared with the logging layer, so the two defences cannot drift apart.
 _URL_TOKEN = TOKEN_IN_URL
@@ -122,7 +130,10 @@ def _strings_in(value: object) -> list[str]:
 
 
 def make_before_send(
-    secrets: Iterable[str] = (), *, ceiling: int = EVENT_CEILING
+    secrets: Iterable[str] = (),
+    *,
+    ceiling: int = EVENT_CEILING,
+    upstream: Destination | None = None,
 ) -> Callable[..., dict[str, Any] | None]:
     """Build the last thing that runs before an event leaves the process.
 
@@ -141,6 +152,11 @@ def make_before_send(
 
     def before_send(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
         nonlocal sent
+        # **Before the ceiling, because the two destinations count separately.** This one is about
+        # somebody else's tracker quota; the upstream destination has its own, lower bound. A crash
+        # loop that exhausted the operator's ceiling must not also decide what we hear about.
+        if upstream is not None:
+            upstream.offer(event)
         if sent >= ceiling:
             if sent == ceiling:
                 sent += 1  # log the refusal once, not once per dropped event
@@ -157,13 +173,63 @@ def make_before_send(
     return before_send
 
 
-def configure_error_reporting(settings: Settings) -> bool:
-    """Point Hullwork's own errors at a tracker. Returns whether it was switched on.
+def _a_transport_that_sends_nothing() -> Any:  # noqa: ANN401 - a Transport, imported lazily
+    """A transport for the client that exists only to *build* events.
+
+    When the operator has no tracker of their own, the SDK client is still needed — it is what turns
+    an unhandled exception and an `ERROR` log line into an event dict — but it must not be the thing
+    that sends. With no working transport there are no sessions, no client reports and no
+    connection, so the only traffic this process makes is the envelope `Destination` posts itself.
+
+    **A real subclass, and that is the whole reason this is a function.** The first version was
+    duck-typed, on the reasoning that this class must exist whether or not the SDK is installed —
+    and `make_transport` decides by `isinstance(ref_transport, Transport)`, so a plausible object
+    with the right methods fell through every branch and the SDK quietly built its **default HTTP
+    transport** instead. Measured against a local ingest on 2026-08-06: the full event went
+    upstream — hostname, `modules`, breadcrumbs, the interpolated message, all of it. The leak this
+    module exists to prevent, arriving through the argument meant to prevent it.
+
+    So the class is built here, after the import, where `Transport` is a name that exists.
+    """
+    from sentry_sdk.transport import Transport
+
+    class SendsNothing(Transport):
+        def capture_envelope(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    return SendsNothing()
+
+
+def configure_error_reporting(
+    settings: Settings,
+    *,
+    operation: str = upstream_module.UNKNOWN,
+    session_factory: Callable[[], Any] | None = None,
+    notify: TextIO | None = None,
+) -> bool:
+    """Point Hullwork's own errors at a tracker. Returns whether reporting was switched on.
 
     Refuses to start rather than reporting nothing when the DSN is set and the extra is missing:
     an instance that believes it is being watched and is not is worse than one that knows it is not.
+
+    **Two destinations, two policies, and neither silences the other** (item 152):
+
+    * `HULLWORK_ERROR_DSN` — the operator's tracker, the whole event, scrubbed. Theirs.
+    * the DSN baked into a published image — a constructed payload, ours. Nothing in a checkout.
+
+    `operation` and `session_factory` only feed the second one: the label an upstream report is
+    counted under, and where its installation identifier is read from. A caller that passes neither
+    still reports upstream — with `unknown` and no identifier, which is worse than the truth and
+    much better than silence.
     """
-    if settings.error_dsn is None:
+    destination: Destination | None = None
+    upstream_dsn = upstream_module.destination(settings)
+    if upstream_dsn is not None:
+        destination = upstream_module.Destination(
+            upstream_dsn, operation=operation, session_factory=session_factory
+        )
+
+    if settings.error_dsn is None and destination is None:
         return False
 
     try:
@@ -171,14 +237,41 @@ def configure_error_reporting(settings: Settings) -> bool:
         from sentry_sdk.integrations.argv import ArgvIntegration
         from sentry_sdk.integrations.logging import LoggingIntegration
     except ImportError as exc:  # pragma: no cover - depends on how the package was installed
+        if settings.error_dsn is None:
+            # **The published image always has the SDK** (item 150 put it there), so this is anybody
+            # who built their own without the extra and inherited a destination — which cannot
+            # happen, because a checkout has no destination to inherit. It stays a log line rather
+            # than a refusal: nobody asked for this reporting, so nobody is owed a failure over it.
+            log.debug("no error-reporting SDK, so nothing can be reported upstream either")
+            return False
         raise ConfigError(
             "HULLWORK_ERROR_DSN is set but the error-reporting SDK is not installed.\n"
             "  Install it with: pip install 'hullwork[telemetry]'\n"
             "  Or unset HULLWORK_ERROR_DSN to run without error reporting."
         ) from exc
 
+    global _upstream
+    _upstream = destination
+
+    # **Before the SDK is armed, so nothing can have been sent when this returns** (item 153). On
+    # `stderr` and not through the logger: a `json` formatter turns this into a field somebody has
+    # to go looking for, and the point is that it is in front of the person starting the process.
+    if destination is not None:
+        print(upstream_module.notice(destination.host), file=notify or sys.stderr)
+
     sentry_sdk.init(
-        dsn=settings.error_dsn.get_secret_value(),
+        # **The DSN here is only ever the operator's.** When they have none, the client still has to
+        # exist — it is what turns an unhandled exception into an event at all — so it is pointed at
+        # the upstream destination and given a transport that sends nothing. Every upstream report
+        # leaves through `Destination`, measured, and never through this client: handing it a
+        # constructed event put `environment` and `server_name` on the wire, because the client adds
+        # both *after* `before_send`.
+        dsn=(
+            settings.error_dsn.get_secret_value()
+            if settings.error_dsn is not None
+            else upstream_dsn
+        ),
+        transport=(None if settings.error_dsn is not None else _a_transport_that_sends_nothing()),
         environment=settings.environment,
         # The deployed commit when the deployment says so, the package version otherwise. Only a
         # sha can be compared against a merge commit, which is what decides whether a fix held.
@@ -190,7 +283,7 @@ def configure_error_reporting(settings: Settings) -> bool:
         # Every credential this process holds, not the two somebody thought of. The dangerous one
         # appears in no URL and has no telling field name, so only knowing its value catches it —
         # and the list used to be shorter here than in the log redactor. See `known_secrets`.
-        before_send=cast("Any", make_before_send(known_secrets(settings))),
+        before_send=cast("Any", make_before_send(known_secrets(settings), upstream=destination)),
         # `sys.argv` in every event. This service's command line holds nothing secret, but that is
         # a property of how we happen to run it, not a guarantee, and the information is worth
         # nothing here — the command is always the same one.
@@ -219,5 +312,19 @@ def configure_error_reporting(settings: Settings) -> bool:
         # Hullwork does not consume traces, and turning them on is a cost decision nobody made.
         traces_sample_rate=0.0,
     )
-    log.info("error reporting enabled", extra={"environment": settings.environment})
+    if settings.error_dsn is not None:
+        log.info("error reporting enabled", extra={"environment": settings.environment})
+    if destination is not None:
+        # **Named, at INFO, on every start.** Item 153 is the notice a person reads before the first
+        # event; this is the line an operator finds in the log they already have — and the host is
+        # there so nobody has to take our word for where it goes.
+        log.info(
+            "this build reports its own crashes upstream; HULLWORK_TELEMETRY=off stops it",
+            extra={"upstream_host": destination.host},
+        )
     return True
+
+
+def upstream_destination() -> Destination | None:
+    """The upstream destination this process configured, if any. For `close` at shutdown."""
+    return _upstream

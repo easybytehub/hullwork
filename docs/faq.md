@@ -102,9 +102,31 @@ a shrug (DR-0002). See a real seal in
 
 ### What leaves my network?
 
-Whatever you point it at, and nothing else. There is no telemetry to us, no licence check, no
-registration — the only hardcoded external host in the codebase is `api.github.com`, used when your forge
-*is* GitHub.
+Whatever you point it at, plus one thing: ~~There is no telemetry to us, no licence check, no
+registration~~ — **the published image reports Hullwork's own crashes to us.** That sentence was true
+when it was written on 2026-08-04 and stopped being true on 2026-08-06; it is struck rather than
+deleted because a claim this project made in public is not something to quietly edit.
+
+There is still no licence check and no registration. The only hardcoded external host in the codebase
+is `api.github.com`, used when your forge *is* GitHub.
+
+**What the reporting is, exactly.** A crash inside Hullwork produces about 350 bytes: the exception
+class, Hullwork's own stack frames, its version, your Python version, a random identifier for the
+installation, and how many projects, items and attempts it holds. It cannot carry the error message,
+local variables, URLs, your hostname, your repository names, or anything from the errors your own
+software reports — not because those are filtered out, but because the payload is *built* from a fixed
+list of fields and there is nowhere for them to be. [`hullwork/upstream.py`](../hullwork/upstream.py)
+is short and is the whole of it.
+
+```
+hullwork config --telemetry     # the exact payload this instance would send
+HULLWORK_TELEMETRY=off          # stop it
+```
+
+The destination exists **only in the image we publish**. A build made from a checkout has nowhere to
+send anything, and a test in this repository fails if a destination ever appears in the source. The
+first line of every start says all of this in the terminal, before anything is sent. Details in
+[PRIVACY.md](../PRIVACY.md).
 
 Be clear about what configuring a hosted model means, though: **point Hullwork at a hosted endpoint and
 your source and stack traces go to that provider**, because that is what asking a hosted model to read
@@ -113,8 +135,17 @@ Anything else is a decision with a destination, and the seal records which endpo
 
 ### Do you see my errors, my code, or my usage?
 
-No. Nothing reports to EasyByte. `HULLWORK_ERROR_DSN` sends Hullwork's *own* crashes to **your** tracker,
-if you set it, with secrets scrubbed by name and by value.
+**Your errors, your code and your usage: no.** Nothing about them can reach us — the payload above has
+no field that could hold them.
+
+**Hullwork's own crashes: yes, from the published image.** ~~Nothing reports to EasyByte.~~ The
+exception class and our own stack frames, so a defect somebody hits on an installation we will never
+see becomes something we can fix. `HULLWORK_TELEMETRY=off` stops it; a build you make yourself never
+starts.
+
+Separately and unchanged: `HULLWORK_ERROR_DSN` sends Hullwork's *own* crashes to **your** tracker, if
+you set it, with secrets scrubbed by name and by value. The two are independent — neither silences the
+other, and yours gets the whole event while ours gets the constructed payload.
 
 ## Fit
 

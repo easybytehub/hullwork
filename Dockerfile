@@ -25,6 +25,17 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     HULLWORK_DATABASE_URL="sqlite:////data/hullwork.db"
 
+# **Where this build reports its own crashes, and nowhere else** (item 152). Empty here and empty in
+# every build made from a checkout: the repository contains no destination, which is a fact anybody
+# can check with `grep` rather than a promise about our intentions. The release workflow passes one
+# from a repository secret, so the image *we publish* reports the defects it hits on other people's
+# machines — a Sentry DSN is a public write-only key, so finding it in the image is expected.
+#
+# What travels is not an event: `hullwork/upstream.py` constructs it from an enumerated set of
+# fields and cannot carry a message, a local, a URL or a hostname. `HULLWORK_TELEMETRY=off` declines.
+ARG UPSTREAM_DSN=
+ENV HULLWORK_UPSTREAM_DSN="${UPSTREAM_DSN}"
+
 # `git` and the Docker CLI, for the dispatcher (item 082). The receiver needs neither; they are here
 # because both programs run from this one image, and the alternative — a second image differing by two
 # packages — is a second thing to keep in step. The socket is not in the image: it is mounted only

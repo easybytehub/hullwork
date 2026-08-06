@@ -692,3 +692,31 @@ class DispatcherLease(Base):
     #: Three states, not two. `None` is *"not recorded"* — a lease taken by a build older than the
     #: column — and it must not read as `off`, which is the defect item 105 was closed for.
     error_reporting: Mapped[bool | None] = mapped_column(Boolean, default=None)
+
+
+class Installation(Base):
+    """A name this deployment can be counted by. One row, id 1. Item 151.
+
+    **Random, and generated here.** Not the hostname, not a MAC address, not a hash of either: a
+    hash of a hostname is still the hostname to anybody holding a list of hostnames to try. Sixteen
+    random bytes are a name that means nothing anywhere except beside the other events carrying it.
+
+    **What it buys, and it is the only thing it buys.** Forty crashes from one installation and one
+    crash from forty installations are the same forty events without it, and those two situations
+    call for opposite work. Nothing else upstream is allowed to identify anybody, which is what
+    makes this the field that has to be honest about being an identifier.
+
+    Written on first use rather than at migration time, so a deployment that never reports anything
+    never acquires one — and `hullwork init` is not the moment somebody is asked to accept being
+    counted.
+    """
+
+    __tablename__ = "installation"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    #: 32 hexadecimal characters from `secrets.token_hex(16)`. Stored, never derived, never rotated:
+    #: rotating would double-count one installation, which is the one measurement this exists for.
+    identifier: Mapped[str] = mapped_column(String(32))
+
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)

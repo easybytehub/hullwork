@@ -18,7 +18,11 @@ from hullwork.forge.factory import make_forge
 from hullwork.ingest import sweep
 from hullwork.logging import configure_logging
 from hullwork.readiness import record_sweep_ok
-from hullwork.telemetry import configure_error_reporting, known_secrets
+from hullwork.telemetry import (
+    configure_error_reporting,
+    known_secrets,
+    upstream_destination,
+)
 from hullwork.tracker.factory import make_inventory, make_tracker
 from hullwork.webhooks import router as webhooks_router
 
@@ -131,7 +135,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     _refuse_the_credential_this_process_must_not_hold(settings)
 
     # Before anything else that can fail, so a start-up error is itself reported.
-    reporting = configure_error_reporting(settings)
+    #
+    # The session factory is built here rather than below so an upstream report can be attributed to
+    # this installation. Building it opens nothing — the engine connects on first use — and the
+    # identifier is read lazily, at most once, the first time there is something to report. A crash
+    # before then still travels, uncounted: item 151's `installation: None`.
+    factory = make_session_factory(get_engine(settings.database_url))
+    reporting = configure_error_reporting(settings, operation="receiver", session_factory=factory)
     global _reporting_enabled
     _reporting_enabled = reporting
 
@@ -169,7 +179,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     # Anything accepted before the last shutdown is finished now. A delivery we answered 200 to and
     # then dropped on restart would be a promise quietly broken, and nobody would ever find out.
-    factory = make_session_factory(get_engine(settings.database_url))
     try:
         _sweep_once(factory, settings)
     except Exception:  # a cold database must not stop the service from booting
@@ -187,6 +196,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             ticker.cancel()
             with suppress(asyncio.CancelledError):
                 await ticker
+        # Whatever was posted upstream in the last moments gets two seconds to leave, and then does
+        # not. A shutdown that waits on our ingest is a shutdown we made slower on somebody else's
+        # machine — and the crash that mattered is the one that caused the shutdown, which was
+        # already sent.
+        destination = upstream_destination()
+        if destination is not None:
+            destination.close()
 
 
 app = FastAPI(

@@ -115,6 +115,11 @@ REACH: dict[str, Reach] = {
     "instance": Reach.BOTH,
     "database_url": Reach.BOTH,
     "error_dsn": Reach.BOTH,
+    # Both, because both programs crash. The receiver is where a stranger's first failure happens
+    # and the dispatcher is where the long-running one does; hearing from only one would make every
+    # measurement of *where Hullwork breaks* an artefact of which half we listened to.
+    "upstream_dsn": Reach.BOTH,
+    "telemetry": Reach.BOTH,
     "environment": Reach.BOTH,
     "release": Reach.BOTH,
     # The receiver builds the webhook URLs it hands out, and answers on them.
@@ -538,6 +543,20 @@ HULLWORK_TRACKER_ORG=
 # one that knows it is not. Set both of these together, and rebuild.
 HULLWORK_ERROR_DSN=
 BUILD_EXTRAS=
+
+# **The other direction, and it is not yours.** The image *we publish* carries a destination for
+# Hullwork's own crashes — the defects it hits on installations we will never see — baked in at
+# release time. This is the switch that declines: `off` and nothing is sent, in any build.
+#
+# What it would send is not an error report as you know one. It is constructed from a fixed list of
+# fields — the exception class, our own stack frames, our version, your Python version, a random
+# identifier for this installation, and how many projects and items it holds — and it cannot carry a
+# message, a local variable, a URL, a repository name or your hostname. `hullwork/upstream.py` is
+# short and is the whole of it.
+#
+# An image you build yourself sends nothing regardless: the repository contains no destination, and
+# a test fails if one ever appears in it.
+HULLWORK_TELEMETRY=on
 
 # The commit this deployment is running. **Set it from your deploy** — `git rev-parse HEAD` — or
 # the post-merge watch cannot tell whether a recurrence came from code that contains the fix, and

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import SecretStr
 
+from hullwork import upstream
 from hullwork.config import Settings
 from hullwork.scaffold import REACH, Reach
 
@@ -56,7 +57,23 @@ def rows(settings: Settings) -> Iterator[tuple[str, str, str, str]]:
     for name in sorted(Settings.model_fields):
         variable = f"HULLWORK_{name.upper()}"
         raw = getattr(settings, name)
-        if name in SECRETS:
+        if name == "upstream_dsn":
+            # **The one credential whose host is printed, and it is not the operator's** (item 152).
+            # `set` would be the honest answer to *is there a value*, and the wrong answer to the
+            # question somebody has: *where does this build send my crashes*. The address is ours,
+            # so printing it costs nobody anything and refusing to print it would make an operator
+            # take our word for it. The key still never appears.
+            # `get_secret_value()`, because `str(SecretStr)` is `'**********'` — the first version
+            # of this line printed *"reports to **********"*, which redacts the half that is ours
+            # and keeps nothing that was secret.
+            shown = (
+                "not set"
+                if raw is None
+                else f"reports to {upstream.named_host(raw.get_secret_value())}"
+            )
+            if raw is not None and upstream.destination(settings) is None:
+                shown += " (declined: HULLWORK_TELEMETRY)"
+        elif name in SECRETS:
             shown = "set" if raw is not None else "not set"
         elif raw is None:
             shown = "not set"

@@ -49,6 +49,22 @@ Each of these is a property of the code, and the file that implements it explain
   attacker can reach — cannot push, and refuses to start if it finds a credential that can. The half
   that can push listens on nothing.
 
+### What leaves the instance
+
+Two things, and neither of them can carry your code.
+
+- **A hosted model endpoint gets your source and your stack traces**, if you point Hullwork at one.
+  That is not a leak, it is what asking a hosted model to read your code *is* — and it is why
+  `autofix.agent: none` is the default, why a local endpoint is a supported configuration, and why the
+  seal records which endpoint answered every attempt (DR-0002).
+- **The image we publish reports Hullwork's own crashes to us.** Not yours: the payload is *built* from
+  an enumerated set of fields — exception class, our own stack frames, our version, your Python
+  version, a random installation identifier, four row counts — so there is no field an error message,
+  a URL, a hostname or a repository name could occupy (`hullwork/upstream.py`, about 350 bytes on the
+  wire). The terminal says so before anything is sent; `hullwork config --telemetry` prints the exact
+  payload; `HULLWORK_TELEMETRY=off` stops it; and an image you build yourself has no destination in it
+  at all, which a test enforces against the whole source tree. [PRIVACY.md](PRIVACY.md) is the detail.
+
 ### What is not covered, stated rather than implied
 
 - **A human reads the artefact.** The gate is a person, and a person can be misled by a convincing

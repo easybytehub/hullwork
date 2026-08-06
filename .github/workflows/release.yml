@@ -68,6 +68,10 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           STABLE: ${{ steps.version.outputs.stable }}
+          # Through the environment rather than interpolated into the script, so the value cannot end
+          # up in a shell trace or a log line. Empty when the secret is unset, which builds an image
+          # that reports nowhere — the same as a checkout.
+          UPSTREAM_DSN: ${{ secrets.UPSTREAM_DSN }}
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           image="ghcr.io/${{ github.repository }}"
@@ -83,8 +87,17 @@ jobs:
           # cannot run against an image they pulled, and a `postgresql://` URL died in a raw
           # SQLAlchemy traceback — while the README's support matrix said Postgres works. Two
           # capabilities documented in three places each, impossible in the thing we ship.
+          # **The destination, and it exists only here** (item 152). The repository contains no DSN —
+          # `test_no_destination_is_hidden_in_the_source_tree` fails if one appears — so a build made
+          # from a checkout reports nowhere, and the artefact we publish reports the defects it hits
+          # on other people's installations. An unset secret leaves it empty, which is the same as a
+          # checkout: no destination, no reporting, no code path taken.
+          #
+          # What travels is constructed, not filtered: see `hullwork/upstream.py`. The key is a
+          # public write-only DSN, so its presence in the image is expected rather than a leak.
           docker buildx build --platform linux/amd64,linux/arm64 \
-            --build-arg EXTRAS='[postgres,telemetry]' "${tags[@]}" --push .
+            --build-arg EXTRAS='[postgres,telemetry]' \
+            --build-arg UPSTREAM_DSN="${UPSTREAM_DSN}" "${tags[@]}" --push .
 
       # `--verify-tag` so a release cannot be created for a tag that was deleted between the push and
       # this step, and `--notes-from-tag` because the annotation is where the notes belong: it travels

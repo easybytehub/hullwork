@@ -193,11 +193,15 @@ failure, and anything you would not let a stranger open a draft pull request abo
 1. **Trust is the product.** A human gate on every merge. Risk lanes — green, amber, red — decide what
    an agent may even attempt, and anything unmatched is red. Every action leaves an auditable trail.
 2. **Your infrastructure, your keys.** Self-hosted first. Bring your own model endpoint, error tracker
-   and forge. Nothing leaves your network unless you configure it to — and be clear about what
-   configuring it means: point Hullwork at a hosted model and your source and stack traces go to that
-   provider, because that is what asking a hosted model to read your code is. `autofix.agent: none` is
-   the default and sends nothing anywhere; a local endpoint sends nothing off your network; anything
-   else is a decision with a destination, and the seal records which endpoint answered every time.
+   and forge. Two things leave your network without you configuring them, and both are named here
+   rather than in a footnote. **Point Hullwork at a hosted model and your source and stack traces go to
+   that provider**, because that is what asking a hosted model to read your code is; `autofix.agent:
+   none` is the default and sends nothing anywhere, a local endpoint sends nothing off your network,
+   and the seal records which endpoint answered every time. And **the image we publish reports
+   Hullwork's own crashes to us** — about 350 bytes, built from a fixed list of fields, with no room
+   for a message, a URL, a hostname or anything of yours. See it with `hullwork config --telemetry`,
+   stop it with `HULLWORK_TELEMETRY=off`, or build your own image, which has no destination in it at
+   all ([PRIVACY.md](PRIVACY.md)).
 3. **Provider-agnostic.** The forge and the tracker are adapters; the coding agent is a *container
    contract* rather than an integration, so any harness that takes a worktree and returns a diff
    qualifies, and any model endpoint works because all model traffic passes through Hullwork's own
@@ -246,6 +250,10 @@ Security: **[SECURITY.md](SECURITY.md)** states the threat model, including what
 Prompt injection through an error payload is *assumed* rather than prevented — natural language cannot
 be sanitised, and a filter that half-works turns a known exposure into a believed-safe one — so the
 defence is what an injected instruction can reach, and that is enumerated.
+
+Privacy: **[PRIVACY.md](PRIVACY.md)** is one page. The published image reports Hullwork's own crashes to
+us — the whole payload is printed there, `hullwork config --telemetry` prints yours, and
+`HULLWORK_TELEMETRY=off` stops it.
 
 ## For development
 

@@ -226,6 +226,9 @@ class Settings(BaseSettings):
         "model_allowed",
         "deployment_env_file", "deployment_compose_file",
         "error_dsn", "release",
+        # `HULLWORK_UPSTREAM_DSN=` in an environment file is how somebody switches off the reporting
+        # baked into a published image, and it has to mean *unset* rather than an empty destination.
+        "upstream_dsn",
     )
 
     @field_validator(*_BLANKABLE, mode="before")
@@ -288,6 +291,31 @@ class Settings(BaseSettings):
     # phone anywhere unless told to. Setting it requires `pip install hullwork[telemetry]`, and
     # start-up fails loudly if it is set without that, rather than quietly reporting nothing.
     error_dsn: SecretStr | None = None
+
+    # **Where Hullwork's own crashes are reported to *us*. Item 152, and it is not in this file.**
+    #
+    # There is no default and there never may be one: this repository contains no destination, which
+    # is why `test_no_destination_is_hidden_in_the_source_tree` can check by reading rather than
+    # asking anybody to trust the code. A build made from a checkout has nowhere to send anything.
+    #
+    # The published image is the exception, and it is deliberate: the release workflow bakes a DSN
+    # into it from a repository secret, so the artefact we hand out reports its own defects and a
+    # build you make yourself does not. Extracting it from the image is expected — a Sentry DSN is a
+    # public write-only key — which is why the ingest in front of it is rate-limited (item 154).
+    #
+    # What travels is not an event: `upstream.upstream_payload` constructs it out of an enumerated
+    # set of fields, and cannot carry a message, a local, a URL or a hostname.
+    upstream_dsn: SecretStr | None = None
+
+    # The switch, for the operator who wants the published image and not the reporting. `off` stops
+    # it; anything else leaves it as the build set it.
+    #
+    # A separate variable rather than `HULLWORK_UPSTREAM_DSN=`, because the two say different
+    # things:
+    # emptying the DSN is *"I built this and there is nowhere to send it"*, while this is *"I have
+    # your build and I am declining"*. `hullwork init` writes it, so it is a line somebody reads
+    # before it is a line somebody searches for.
+    telemetry: str = "on"
 
     # **Narrowing, for the operator whose situation requires it** — DR-0007's *"default open,
     # narrowable"*, item 068. Empty means no narrowing at all, which is the default and the shipped
