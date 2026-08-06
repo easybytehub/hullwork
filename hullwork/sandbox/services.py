@@ -30,8 +30,8 @@ import time
 from dataclasses import dataclass, field
 from types import TracebackType
 
+from hullwork.sandbox.docker import SandboxError, run_docker
 from hullwork.sandbox.inventory import label_args
-from hullwork.sandbox.run import SandboxError, _docker
 
 log = logging.getLogger(__name__)
 
@@ -243,7 +243,7 @@ class Services:
     # --- construction --------------------------------------------------------------------------
 
     def _create_network(self) -> None:
-        created = _docker(
+        created = run_docker(
             [self._docker, "network", "create", "--internal", *label_args(), self.network],
             timeout=DOCKER_TIMEOUT_SECONDS,
         )
@@ -278,7 +278,7 @@ class Services:
             argv += ["--env", f"{key}={value}"]
         argv.append(service.image)
 
-        started = _docker(argv, timeout=DOCKER_TIMEOUT_SECONDS)
+        started = run_docker(argv, timeout=DOCKER_TIMEOUT_SECONDS)
         if started.returncode != 0:
             msg = f"could not start the {name!r} the manifest declares"
             raise ServiceError(msg, started.stdout + started.stderr)
@@ -300,7 +300,7 @@ class Services:
         deadline = time.monotonic() + READY_SECONDS
         last = ""
         while time.monotonic() < deadline:
-            answered = _docker(
+            answered = run_docker(
                 [
                     self._docker, "run", "--rm", "--network", self.network,
                     "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
@@ -323,6 +323,6 @@ class Services:
 def _quietly(docker: str, argv: list[str]) -> None:
     """Best-effort teardown. Never raises: a failed cleanup must not mask the real error."""
     try:
-        _docker([docker, *argv], timeout=DOCKER_TIMEOUT_SECONDS)
+        run_docker([docker, *argv], timeout=DOCKER_TIMEOUT_SECONDS)
     except SandboxError as exc:
         log.warning("could not tear down a service", extra={"argv": argv, "error": str(exc)})

@@ -40,8 +40,8 @@ from pathlib import Path
 
 import pytest
 
+from hullwork.sandbox.docker import SandboxError
 from hullwork.sandbox.net import Cable
-from hullwork.sandbox.run import SandboxError
 
 #: The value from the report. Absolute, so `shutil.which` checks it directly rather than searching
 #: PATH — and answers `None`, which is what makes `_docker` refuse.

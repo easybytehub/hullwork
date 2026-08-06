@@ -66,6 +66,23 @@ Registered 'myproject' (owner/myproject on forgejo).
     https://hullwork.example.com/webhooks/glitchtip/myproject/<token>
 ```
 
+## Registering from a script? Keep it out of the log
+
+That URL is the credential, and standard output is not a private channel — it lands in terminal
+scrollback, in `script` output, in a screenshot sent with a question, and in a CI log the day this
+command runs unattended. For that case:
+
+```bash
+hullwork projects add --slug myproject --repo owner/myproject \
+    --credential-file /run/secrets/myproject.url
+```
+
+It writes the URL at **mode 600** and prints the path instead. It refuses to overwrite an existing
+file, because a credential silently replaced is one somebody is still using. `rotate-secret` takes the
+same flag.
+
+At a terminal, the default is the right one: you need to see it to paste it.
+
 ## That URL is a bearer credential
 
 GlitchTip cannot sign its webhooks — there is no header, no secret, no setting that enables one — so the

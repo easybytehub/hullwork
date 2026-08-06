@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from hullwork.sandbox.docker import SandboxError, UnsafePathError
 from hullwork.sandbox.run import (
     MAX_CHANGED_FILES,
     MAX_FILE_BYTES,
@@ -18,8 +19,6 @@ from hullwork.sandbox.run import (
     WORKDIR,
     RunResult,
     Sandbox,
-    SandboxError,
-    UnsafePathError,
     collect_changes,
     is_test_infrastructure,
     snapshot,

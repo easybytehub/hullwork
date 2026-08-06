@@ -484,7 +484,7 @@ def test_a_sandbox_that_cannot_run_is_an_operator_message_not_a_traceback(
     session: Session, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`docker` missing is the most likely first-run failure of this command, by a distance."""
-    from hullwork.sandbox.run import SandboxError
+    from hullwork.sandbox.docker import SandboxError
 
     def _explode(*a: object, **k: object) -> None:
         raise SandboxError("'docker' is not on PATH")

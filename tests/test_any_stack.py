@@ -27,7 +27,6 @@ import yaml
 from hullwork import propose
 from hullwork.manifest import parse_manifest
 from hullwork.sandbox import image as image_module
-from hullwork.sandbox import run as run_module
 from hullwork.sandbox.image import ImageBuildError, build, dockerfile, image_tag
 
 #: `gorilla/mux`, trimmed. The shape that produced no base at all: a runner label and a setup
@@ -631,7 +630,9 @@ def test_the_maven_warm_up_runs_the_tests_and_ignores_their_result() -> None:
 # --- item 114: what the build put in the tree survives the mount -------------------------------
 
 
-def test_the_worktree_volume_can_be_seeded_from_the_image() -> None:
+def test_the_worktree_volume_can_be_seeded_from_the_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """**The last structural gap, and it is not about PHP** (item 114).
 
     Every ecosystem before this was served by moving its dependencies *out* of the worktree and
@@ -659,12 +660,11 @@ def test_the_worktree_volume_can_be_seeded_from_the_image() -> None:
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    monkeypatched = run_module._docker
-    run_module._docker = recorded
-    try:
-        box.ensure_volume("hullwork-worktree-x", seed_from_image=True)
-    finally:
-        run_module._docker = monkeypatched
+    # **By string, and in `run`'s own namespace.** `run.py` does `from …docker import run_docker`,
+    # so its name is already bound: replacing the function in `docker.py` would change nothing and
+    # the test would quietly talk to the real Docker daemon.
+    monkeypatch.setattr("hullwork.sandbox.run.run_docker", recorded)
+    box.ensure_volume("hullwork-worktree-x", seed_from_image=True)
 
     seeding = next(argv for argv in calls if "--entrypoint" in argv)
     assert "--user" in seeding and seeding[seeding.index("--user") + 1] == "0:0"
@@ -673,7 +673,9 @@ def test_the_worktree_volume_can_be_seeded_from_the_image() -> None:
     assert calls.index(seeding) < calls.index(["__push__"])
 
 
-def test_seeding_from_the_image_is_off_unless_asked_for() -> None:
+def test_seeding_from_the_image_is_off_unless_asked_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The seam every attempt runs through, so the default has to be yesterday's behaviour. Six
     repositories pass step 0 through this path and none of them needs the seeding."""
     from hullwork.sandbox.run import Sandbox
@@ -690,12 +692,11 @@ def test_seeding_from_the_image_is_off_unless_asked_for() -> None:
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    monkeypatched = run_module._docker
-    run_module._docker = recorded
-    try:
-        box.ensure_volume("hullwork-worktree-x")
-    finally:
-        run_module._docker = monkeypatched
+    # **By string, and in `run`'s own namespace.** `run.py` does `from …docker import run_docker`,
+    # so its name is already bound: replacing the function in `docker.py` would change nothing and
+    # the test would quietly talk to the real Docker daemon.
+    monkeypatch.setattr("hullwork.sandbox.run.run_docker", recorded)
+    box.ensure_volume("hullwork-worktree-x")
 
     assert not [argv for argv in calls if "--entrypoint" in argv]
 
