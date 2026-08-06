@@ -15,9 +15,20 @@
 # and `docs/releasing.md` says so where somebody would look.
 name: edge
 
+# **Asked for, and nightly. Not on every push, and that is a correction.**
+#
+# The first version built on every commit to `main`, which sounded right and was not: four merged pull
+# requests and two releases in one afternoon meant six multi-architecture pushes to the registry, and
+# GitHub answered the last one with a **secondary rate limit** — `403 permission_denied` in the middle
+# of publishing `0.1.0a5`, which read like a credentials failure and was traffic of our own making.
+#
+# The capability was never *"an image per commit"*. It is *"measure against the published artefact
+# without spending a version"*, and that is a thing somebody asks for at a moment. So: on request, and
+# once a night so a stale `edge` is at most a day old.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
 
 # Read at the top, write on the job. See `release.yml` for why Scorecard makes this a check.
 permissions:

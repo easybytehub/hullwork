@@ -12,7 +12,7 @@ Two rules, and everything below is the reasoning behind them.
 |---|---|---|
 | a change | pull request → `ruff`, `mypy`, `pytest` green → merge | opened and merged by the maintainer |
 | the public tree | `scripts/publish.sh` opens the pull request; the diff is readable before it is public | same |
-| `edge` and `sha-<commit>` | every commit on `main`, automatically | nobody decides |
+| `edge` and `sha-<commit>` | nightly, or on request (`gh workflow run edge`) | nobody decides |
 | `v0.1.0aN` | a tag, deliberately | a person |
 | `latest` | only a plain `N.N.N`, and there is not one yet | nobody, for now |
 
@@ -47,9 +47,17 @@ Each fix was real. The problem is that the *measurement* required a published im
 says so in as many words — so proving each fix meant publishing another version. Four promises to
 strangers to settle three questions of ours.
 
-`edge` is the fix: every commit on `main` builds `ghcr.io/easybytehub/hullwork:edge` and
-`:sha-<commit>`, with the same extras and the same destination as a release. Measuring against the
-real artefact now costs a push instead of a version.
+`edge` is the fix: `ghcr.io/easybytehub/hullwork:edge` and `:sha-<commit>`, built with the same extras
+and the same destination as a release. Measuring against the real artefact costs a workflow run instead
+of a version:
+
+```bash
+gh workflow run edge --repo easybytehub/hullwork
+```
+
+**Nightly and on request, not per commit** — the first version built on every push, and six
+multi-architecture pushes in one afternoon tripped GitHub's secondary rate limit hard enough to fail a
+release mid-publish. The capability wanted was never "an image per commit".
 
 **Use `sha-<commit>` when writing a result down.** `edge` moves, so *"measured against edge"* stops
 meaning anything the next time anybody pushes.
