@@ -208,7 +208,13 @@ def test_the_edge_channel_exists_so_measuring_costs_no_version() -> None:
     edge = _loaded(path)
     text = path.read_text(encoding="utf-8")
 
-    assert _triggers(edge) == {"push": {"branches": ["main"]}}, "edge follows main and nothing else"
+    # **Not on every push**, which is where this started: six multi-architecture pushes in an
+    # afternoon tripped GitHub's secondary rate limit and took a release down with it. On request,
+    # and nightly so a stale `edge` is at most a day old.
+    triggers = _triggers(edge)
+    assert "workflow_dispatch" in triggers, "measuring is a thing somebody asks for at a moment"
+    assert "schedule" in triggers, "and a nightly floor, so edge is never a week behind"
+    assert "push" not in triggers, "an image per commit is traffic, not a capability"
     assert "sha-$short" in text, "an immutable tag, or a recorded measurement means nothing later"
     assert "$image:latest" not in text, "edge must never move latest"
     concurrency = edge["concurrency"]
