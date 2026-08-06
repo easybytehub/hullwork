@@ -12,6 +12,7 @@ in the operator's own terminal, instead of travelling in a response body.
 import argparse
 import json
 import logging
+import os
 import signal
 import subprocess
 import sys
@@ -68,10 +69,10 @@ from hullwork.models import (
     ItemState,
     Project,
 )
+from hullwork.sandbox.docker import SandboxError, UnsafePathError
 from hullwork.sandbox.harness import BundleError
 from hullwork.sandbox.image import ImageBuildError
 from hullwork.sandbox.net import EgressError
-from hullwork.sandbox.run import SandboxError, UnsafePathError
 from hullwork.sandbox.services import ServiceError
 from hullwork.security import generate_token, hash_token
 from hullwork.states import IllegalTransitionError, transition
@@ -745,11 +746,46 @@ def _require(session: Session, slug: str) -> Project:
 # --- presentation ----------------------------------------------------------------------------
 
 
-def _print_credential(url: str, slug: str, out: TextIO) -> None:
+def _print_credential(url: str, slug: str, out: TextIO, into: str | None = None) -> None:
+    """Hand the operator their webhook URL — to the screen, or to a file only they can read.
+
+    **The screen is the right default and the wrong channel for a script.** The token is stored
+    hashed, so this is the only moment it exists in readable form: an operator who cannot see it
+    cannot paste it into their tracker. But standard output is not private — it lands in terminal
+    scrollback, in `script` output, in a screenshot sent with a question, and in a CI log the day
+    somebody automates registration. CodeQL called that `clear-text-logging-sensitive-data` at
+    `high` (item 163), and it was right about the pipeline even though wrong about the person.
+
+    So `--credential-file` writes it at mode 600 and prints the path instead, the same shape the
+    gateway's model credential already uses. Same rule as `hullwork init` (item 115): it **refuses
+    to overwrite**, because a credential silently replaced is one somebody is still using.
+    """
+    if into is not None:
+        target = Path(into)
+        if target.exists():
+            raise CommandError(
+                f"{target} already exists, and this would overwrite a credential.\n"
+                f"  Something may still be using it. Move it aside, or name another path."
+            )
+        # Created with the mode rather than chmod-ed after: between the two calls there is a moment
+        # where the token is world-readable, and that moment is the whole point of the flag.
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(f"{url}\n")
+        print(f"\n  The credential is in {target}, mode 600, and nowhere else.\n", file=out)
+        print("  Paste it into your error tracker as the webhook target, then delete it.", file=out)
+        print(f"  If it leaks or is lost: hullwork projects rotate-secret {slug}\n", file=out)
+        return
+
     print("\n  This URL is the credential. It is shown once and cannot be recovered:\n", file=out)
     print(f"    {url}\n", file=out)
     print("  Paste it into your error tracker as the webhook target.", file=out)
     print(f"  If it leaks or is lost: hullwork projects rotate-secret {slug}\n", file=out)
+    print(
+        "  Registering from a script? `--credential-file PATH` writes it at mode 600 and prints\n"
+        "  the path instead, so the token does not end up in a log.\n",
+        file=out,
+    )
 
 
 def _cmd_add(args: argparse.Namespace, session: Session, settings: Settings, out: TextIO) -> int:
@@ -774,7 +810,12 @@ def _cmd_add(args: argparse.Namespace, session: Session, settings: Settings, out
         f"Agent: {registration.manifest.autofix.agent}.",
         file=out,
     )
-    _print_credential(registration.webhook_url(settings.base_url), registration.project.slug, out)
+    _print_credential(
+        registration.webhook_url(settings.base_url),
+        registration.project.slug,
+        out,
+        into=getattr(args, "credential_file", None),
+    )
     _report_credentials(session, settings, out, only=registration.project.slug)
     _print_what_is_live(registration, out)
     return 0
@@ -849,7 +890,7 @@ def _cmd_rotate(
     provider = str((manifest.get("errors") or {}).get("provider", "glitchtip"))
     url = f"{settings.base_url.rstrip('/')}/webhooks/{provider}/{project.slug}/{token}"
     print(f"Rotated the token for '{project.slug}'. The previous one stops working now.", file=out)
-    _print_credential(url, project.slug, out)
+    _print_credential(url, project.slug, out, into=getattr(args, "credential_file", None))
     return 0
 
 
@@ -2652,6 +2693,14 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--slug", required=True, help="unique name for this project in this instance")
     add.add_argument("--forge", default="forgejo", choices=SUPPORTED_FORGES)
     add.add_argument("--repo", required=True, help="owner/name on the forge")
+    add.add_argument(
+        "--credential-file",
+        metavar="PATH",
+        help=(
+            "write the webhook URL there at mode 600 and print the path instead of the URL, so a "
+            "script's log does not end up holding a credential. Refuses to overwrite"
+        ),
+    )
     add.set_defaults(func=_cmd_add)
 
     listing = actions.add_parser("list", help="list registered projects")
@@ -2663,6 +2712,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     rotate = actions.add_parser("rotate-secret", help="issue a new webhook token")
     rotate.add_argument("slug")
+    rotate.add_argument(
+        "--credential-file",
+        metavar="PATH",
+        help=(
+            "write the webhook URL there at mode 600 and print the path instead of the URL, so a "
+            "script's log does not end up holding a credential. Refuses to overwrite"
+        ),
+    )
     rotate.set_defaults(func=_cmd_rotate)
 
     refresh = actions.add_parser(

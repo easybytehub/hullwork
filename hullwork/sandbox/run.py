@@ -23,15 +23,21 @@ import json
 import logging
 import re
 import secrets
-import shutil
-import subprocess
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# **At module level, and that is the point of item 162.** These two used to be imported inside the
+# functions that use them, because `harness` and `services` imported `SandboxError` and the command
+# runner from here — a cycle broken by hand, in two places, with nothing saying so at the top of the
+# file. Both of them take those from `sandbox.docker` now, so nothing points back at this module and
+# the imports can say what they are.
+from hullwork.sandbox.docker import SandboxError, UnsafePathError, run_docker
+from hullwork.sandbox.harness import BUNDLE_DIR
 from hullwork.sandbox.inventory import label_args
+from hullwork.sandbox.services import Services
 
 log = logging.getLogger(__name__)
 
@@ -156,33 +162,6 @@ MAX_CHANGED_FILES = 200
 #: What carries files in and out of the volume and does the chown. Tiny, and never the project's own
 #: image: this runs as root and must be something the instance chose.
 CARRIER_IMAGE = "alpine:3"
-
-
-class SandboxError(RuntimeError):
-    """The sandbox could not do what was asked. Carries output where there is any — and *shows* it.
-
-    **`__str__` was the message alone until 2026-08-04**, which meant every raise site that bothered
-    to capture `stdout + stderr` threw it away at the only moment anybody reads an exception.
-    Measured on a stranger evaluating the product: `could not create the attempt's network` cost
-    ten minutes and a wrong conclusion, because Docker had said `network with name … already
-    exists` and nothing printed it. A message that hides its cause reads as *your Docker is broken*.
-
-    The tail rather than the whole, at the 25-line convention `cli.py` already uses for this: the
-    cause of a failed `docker` call is at the end, and a build's output is long enough to bury it.
-    """
-
-    def __init__(self, message: str, output: str = "") -> None:
-        super().__init__(message)
-        self.output = output
-
-    def __str__(self) -> str:
-        message = super().__str__()
-        tail = "\n".join(self.output.strip().splitlines()[-25:])
-        return f"{message}\n{tail}" if tail else message
-
-
-class UnsafePathError(SandboxError):
-    """A file the sandbox produced may not be written to the host."""
 
 
 @dataclass
@@ -324,8 +303,6 @@ class Sandbox:
         if model and self.harness_bundle:
             # Read-only: the bundle is shared by every attempt on this instance, so a phase that
             # could write to it could change what the next attempt runs.
-            from hullwork.sandbox.harness import BUNDLE_DIR
-
             argv += ["--volume", f"{self.harness_bundle}:{BUNDLE_DIR}:ro"]
         # A phase that needs the model gets the internal network with the gateway on it, and
         # **nothing else ever does** — enforced here rather than asserted in a comment (item 058).
@@ -434,8 +411,6 @@ class Sandbox:
         comparison is the one thing this product asserts. A fresh `postgres:16` answered in two
         seconds, so this is affordable rather than theoretical.
         """
-        from hullwork.sandbox.services import Services
-
         with Services(self.services, tag=secrets.token_hex(4), docker=self.docker) as services:
             return self._in_container(
                 command, timeout, {**(env or {}), **services.env},
@@ -465,7 +440,7 @@ class Sandbox:
             self._push_contract()
 
         started = time.monotonic()
-        created = _docker(argv, timeout=120)
+        created = run_docker(argv, timeout=120)
         if created.returncode != 0:
             raise SandboxError("could not start the sandbox", created.stdout + created.stderr)
         self._container = created.stdout.strip()
@@ -473,8 +448,8 @@ class Sandbox:
         try:
             timed_out = not self._wait(timeout)
             if timed_out:
-                _docker([self.docker, "kill", "-s", "KILL", self._container], timeout=30)
-            logs = _docker([self.docker, "logs", self._container], timeout=60)
+                run_docker([self.docker, "kill", "-s", "KILL", self._container], timeout=30)
+            logs = run_docker([self.docker, "logs", self._container], timeout=60)
             state = self._state()
             raw_exit = state.get("ExitCode")
             return RunResult(
@@ -488,7 +463,7 @@ class Sandbox:
                 out_of_memory=bool(state.get("OOMKilled")),
             )
         finally:
-            _docker([self.docker, "rm", "-f", self._container], timeout=60)
+            run_docker([self.docker, "rm", "-f", self._container], timeout=60)
             self._container = None
             if self.volume:
                 self._pull()
@@ -514,7 +489,7 @@ class Sandbox:
         if self.contract_dir is None:
             msg = "a contract volume needs a contract directory to seed it from"
             raise SandboxError(msg)
-        created = _docker([self.docker, "volume", "create", *label_args(), name], timeout=60)
+        created = run_docker([self.docker, "volume", "create", *label_args(), name], timeout=60)
         if created.returncode != 0:
             msg = "could not create the attempt's contract volume"
             raise SandboxError(msg, created.stdout + created.stderr)
@@ -525,20 +500,20 @@ class Sandbox:
     def cleanup_contract(self) -> None:
         """Remove the contract volume. Never raises, for `cleanup`'s reason."""
         if self.contract_volume:
-            _docker([self.docker, "volume", "rm", "-f", self.contract_volume], timeout=60)
+            run_docker([self.docker, "volume", "rm", "-f", self.contract_volume], timeout=60)
             self.contract_volume = None
 
     def _push_contract(self) -> None:
         """Host `contract_dir` → volume, owned by the uid the phases run as."""
         with self._contract_carrier() as carrier:
-            copied = _docker(
+            copied = run_docker(
                 [self.docker, "cp", f"{self.contract_dir}/.", f"{carrier}:{CONTRACT_DIR}"],
                 timeout=120,
             )
             if copied.returncode != 0:
                 msg = "could not seed the attempt's contract volume"
                 raise SandboxError(msg, copied.stdout + copied.stderr)
-        owned = _docker(
+        owned = run_docker(
             [
                 self.docker, "run", "--rm", "--user", "0:0",
                 "--volume", f"{self.contract_volume}:{CONTRACT_DIR}",
@@ -558,7 +533,7 @@ class Sandbox:
         report — and raising here would turn it into an abandoned attempt instead.
         """
         with self._contract_carrier() as carrier:
-            copied = _docker(
+            copied = run_docker(
                 [self.docker, "cp", f"{carrier}:{CONTRACT_DIR}/.", str(self.contract_dir)],
                 timeout=120,
             )
@@ -571,7 +546,7 @@ class Sandbox:
     @contextmanager
     def _contract_carrier(self) -> "Iterator[str]":
         """A stopped container mounting the contract volume, for `docker cp` to target."""
-        created = _docker(
+        created = run_docker(
             [
                 self.docker, "create", "--volume", f"{self.contract_volume}:{CONTRACT_DIR}",
                 CARRIER_IMAGE, "true",
@@ -585,7 +560,7 @@ class Sandbox:
         try:
             yield carrier
         finally:
-            _docker([self.docker, "rm", "-f", carrier], timeout=60)
+            run_docker([self.docker, "rm", "-f", carrier], timeout=60)
 
 
     # --- the worktree the container owns (item 055) --------------------------------------------
@@ -617,7 +592,7 @@ class Sandbox:
         default and passed by exactly one caller, so a project that does not need it runs the path
         it ran yesterday — which matters, because this is the seam every attempt goes through.
         """
-        created = _docker([self.docker, "volume", "create", *label_args(), name], timeout=60)
+        created = run_docker([self.docker, "volume", "create", *label_args(), name], timeout=60)
         if created.returncode != 0:
             msg = "could not create the attempt's volume"
             raise SandboxError(msg, created.stdout + created.stderr)
@@ -635,7 +610,7 @@ class Sandbox:
         the phase runs without whatever the build installed — which is the behaviour of yesterday,
         not a new way to break.
         """
-        copied = _docker(
+        copied = run_docker(
             [
                 self.docker, "run", "--rm", "--volume", f"{name}:/hullwork-seed",
                 # **As root, and this took a measurement to see.** The image runs as `hullwork`
@@ -673,19 +648,19 @@ class Sandbox:
     def cleanup(self) -> None:
         """Remove the volume. Never raises: a failed cleanup must not mask the real error."""
         if self.volume:
-            _docker([self.docker, "volume", "rm", "-f", self.volume], timeout=60)
+            run_docker([self.docker, "volume", "rm", "-f", self.volume], timeout=60)
             self.volume = None
 
     def _push(self) -> None:
         """Host worktree → volume, and chown to the uid the phases run as."""
         with self._carrier() as carrier:
-            copied = _docker(
+            copied = run_docker(
                 [self.docker, "cp", f"{self.worktree}/.", f"{carrier}:{WORKDIR}"], timeout=300
             )
             if copied.returncode != 0:
                 msg = "could not seed the attempt's volume"
                 raise SandboxError(msg, copied.stdout + copied.stderr)
-        owned = _docker(
+        owned = run_docker(
             [
                 self.docker, "run", "--rm", "--user", "0:0",
                 "--volume", f"{self.volume}:{WORKDIR}",
@@ -704,7 +679,7 @@ class Sandbox:
         write — the same defect one run later, which is the version nobody sees coming.
         """
         with self._carrier() as carrier:
-            copied = _docker(
+            copied = run_docker(
                 [self.docker, "cp", f"{carrier}:{WORKDIR}/.", str(self.worktree)], timeout=300
             )
             if copied.returncode != 0:
@@ -713,7 +688,7 @@ class Sandbox:
     @contextmanager
     def _carrier(self) -> "Iterator[str]":
         """A stopped container that mounts the volume, for `docker cp` to have a target."""
-        created = _docker(
+        created = run_docker(
             [
                 self.docker, "create", "--volume", f"{self.volume}:{WORKDIR}",
                 CARRIER_IMAGE, "true",
@@ -727,7 +702,7 @@ class Sandbox:
         try:
             yield carrier
         finally:
-            _docker([self.docker, "rm", "-f", carrier], timeout=60)
+            run_docker([self.docker, "rm", "-f", carrier], timeout=60)
 
     def _wait(self, timeout: int) -> bool:
         """Poll until the container exits. False if it had to be killed."""
@@ -739,7 +714,7 @@ class Sandbox:
         return False
 
     def _state(self) -> dict[str, object]:
-        probe = _docker(
+        probe = run_docker(
             [self.docker, "inspect", "--format", "{{json .State}}", self._container or ""],
             timeout=30,
         )
@@ -955,15 +930,4 @@ def interleaved(stdout: str, stderr: str, *, keep: int = 8_000) -> str:
     return "\n".join(parts)
 
 
-def _docker(argv: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
-    if shutil.which(argv[0]) is None:
-        msg = f"{argv[0]!r} is not on PATH; the dispatcher needs the Docker daemon (spec M2 §1)"
-        raise SandboxError(msg)
-    try:
-        return subprocess.run(  # noqa: S603 - argv list, no shell, binary resolved above
-            argv, capture_output=True, text=True, timeout=timeout,
-            check=False, stdin=subprocess.DEVNULL,
-        )
-    except subprocess.TimeoutExpired as exc:
-        msg = f"docker itself did not answer within {timeout}s"
-        raise SandboxError(msg, str(exc.stdout)) from exc
+

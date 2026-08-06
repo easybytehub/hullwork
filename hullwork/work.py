@@ -1050,7 +1050,7 @@ def _dispatcher_failed(exc: Exception) -> str:
     for exactly this, so it is used; anything else keeps the class name, because an arbitrary
     exception's `str()` is not a message anybody wrote for a reader.
     """
-    from hullwork.sandbox.run import SandboxError
+    from hullwork.sandbox.docker import SandboxError
 
     if isinstance(exc, SandboxError):
         return f"the attempt could not be set up: {exc}"

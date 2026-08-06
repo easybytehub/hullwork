@@ -38,7 +38,7 @@ import hashlib
 import logging
 import shlex
 
-from hullwork.sandbox.run import SandboxError, _docker
+from hullwork.sandbox.docker import SandboxError, run_docker
 
 log = logging.getLogger(__name__)
 
@@ -178,17 +178,17 @@ def ensure_bundle(
     build is 266 MB of copying that must happen once and not once per attempt.
     """
     name = bundle_name(source_image, source_bin, install, entrypoint)
-    if _docker([docker, "volume", "inspect", name], timeout=60).returncode == 0:
+    if run_docker([docker, "volume", "inspect", name], timeout=60).returncode == 0:
         log.info("harness bundle present", extra={"bundle": name})
         return name
 
     log.info("building the harness bundle", extra={"bundle": name, "from": source_image})
-    created = _docker([docker, "volume", "create", name], timeout=60)
+    created = run_docker([docker, "volume", "create", name], timeout=60)
     if created.returncode != 0:
         msg = "could not create the volume for the harness bundle"
         raise BundleError(msg, created.stdout + created.stderr)
 
-    built = _docker(
+    built = run_docker(
         [
             docker, "run", "--rm",
             "--volume", f"{name}:/out",
@@ -198,7 +198,7 @@ def ensure_bundle(
         timeout=DOCKER_TIMEOUT_SECONDS,
     )
     if built.returncode != 0:
-        _docker([docker, "volume", "rm", "-f", name], timeout=60)
+        run_docker([docker, "volume", "rm", "-f", name], timeout=60)
         # The tail in the message, not only in `output`: `str(exc)` is what reaches the operator
         # through `_dispatcher_failed`, and a sentence that says only "could not" is the shape items
         # 056 and 063 were both diagnosed the long way round because of.
@@ -215,7 +215,7 @@ def ensure_bundle(
 def _write_wrapper(name: str, entrypoint: str, *, docker: str) -> None:
     """Put the phase entrypoint in the bundle, wired to the mounted harness."""
     script = wrapper_script(entrypoint)
-    written = _docker(
+    written = run_docker(
         [
             docker, "run", "--rm", "--volume", f"{name}:/out",
             "--entrypoint", "sh", "alpine:3", "-c",
@@ -240,7 +240,7 @@ def _prove_it_starts(name: str, *, docker: str) -> None:
     of
     error. Alpine on purpose: it is musl, so a bundle that starts here is one whose libc travelled.
     """
-    probe = _docker(
+    probe = run_docker(
         [
             docker, "run", "--rm", "--volume", f"{name}:{BUNDLE_DIR}:ro",
             "--entrypoint", "sh", "alpine:3", "-c",

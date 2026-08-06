@@ -33,11 +33,11 @@ from hullwork import attempts, brief, testoutput
 from hullwork.engine import REPORT_PATH, AgentReport, Engine, Phase
 from hullwork.manifest import Manifest
 from hullwork.models import Attempt, AttemptOutcome, AttemptPhase, Item
+from hullwork.sandbox.docker import UnsafePathError
 from hullwork.sandbox.run import (
     Changes,
     RunResult,
     Sandbox,
-    UnsafePathError,
     collect_changes,
     is_test_infrastructure,
     snapshot,

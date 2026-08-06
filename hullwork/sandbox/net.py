@@ -52,8 +52,9 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING
 
+from hullwork.sandbox.docker import SandboxError, run_docker
 from hullwork.sandbox.inventory import label_args
-from hullwork.sandbox.run import CARRIER_IMAGE, SandboxError, _docker
+from hullwork.sandbox.run import CARRIER_IMAGE
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime, not at type time
     from hullwork.gateway import Recording
@@ -179,7 +180,7 @@ class Cable:
         # refused a caller or could not reach upstream explains that in its own output and nowhere
         # else, and the first attempt that got this far had to be reproduced by hand to find out.
         try:
-            said = _docker(
+            said = run_docker(
                 [self._docker, "logs", "--tail", "40", self.container],
                 timeout=DOCKER_TIMEOUT_SECONDS,
             )
@@ -291,7 +292,7 @@ class Cable:
         )
 
     def _probe(self, program: str) -> "subprocess.CompletedProcess[str]":
-        return _docker(
+        return run_docker(
             [
                 self._docker, "run", "--rm",
                 "--network", self.network,
@@ -305,7 +306,7 @@ class Cable:
     # --- construction ------------------------------------------------------------------------
 
     def _create_network(self) -> None:
-        created = _docker(
+        created = run_docker(
             [self._docker, "network", "create", "--internal", *label_args(), self.network],
             timeout=DOCKER_TIMEOUT_SECONDS,
         )
@@ -317,7 +318,7 @@ class Cable:
         # and the sandbox does not exist yet. The sandbox's address cannot be named in advance; the
         # network it will be on can — and that is not a widening, because this network is created
         # for one attempt, destroyed with it, and holds exactly two containers we put there.
-        found = _docker(
+        found = run_docker(
             [
                 self._docker, "network", "inspect", self.network,
                 "--format", "{{(index .IPAM.Config 0).Subnet}}",
@@ -354,7 +355,7 @@ class Cable:
         self._cable_volume = f"hullwork-wire-{self._tag}"
         self._seed_volume(credential_file, journal)
 
-        started = _docker(
+        started = run_docker(
             [
                 self._docker, "run", "--detach",
                 "--name", self.container,
@@ -408,7 +409,7 @@ class Cable:
             raise EgressError(msg, started.stdout + started.stderr)
         self._journal = journal
 
-        attached = _docker(
+        attached = run_docker(
             [self._docker, "network", "connect", self.network, self.container],
             timeout=DOCKER_TIMEOUT_SECONDS,
         )
@@ -416,7 +417,7 @@ class Cable:
             msg = "could not attach the gateway to the attempt's network"
             raise EgressError(msg, attached.stdout + attached.stderr)
 
-        address = _docker(
+        address = run_docker(
             [
                 self._docker, "inspect", self.container, "--format",
                 f'{{{{(index .NetworkSettings.Networks "{self.network}").IPAddress}}}}',
@@ -450,7 +451,7 @@ class Cable:
         Owned by this process's uid because that is what `--user` gives the gateway; a volume seeded
         through the socket arrives owned by root, and root's 600 file is unreadable to anyone else.
         """
-        created = _docker(
+        created = run_docker(
             [self._docker, "volume", "create", *label_args(), self._cable_volume or ""],
             timeout=DOCKER_TIMEOUT_SECONDS,
         )
@@ -459,14 +460,14 @@ class Cable:
             raise EgressError(msg, created.stdout + created.stderr)
         with self._carrier() as carrier:
             for source in (credential_file, journal):
-                copied = _docker(
+                copied = run_docker(
                     [self._docker, "cp", str(source), f"{carrier}:{RUN_DIR}/{source.name}"],
                     timeout=DOCKER_TIMEOUT_SECONDS,
                 )
                 if copied.returncode != 0:
                     msg = "could not seed the cable's volume"
                     raise EgressError(msg, copied.stdout + copied.stderr)
-        owned = _docker(
+        owned = run_docker(
             [
                 self._docker, "run", "--rm", "--user", "0:0",
                 "--volume", f"{self._cable_volume}:{RUN_DIR}",
@@ -499,7 +500,7 @@ class Cable:
             return
         try:
             with self._carrier() as carrier:
-                copied = _docker(
+                copied = run_docker(
                     [
                         self._docker, "cp",
                         f"{carrier}:{RUN_DIR}/{self._journal.name}", str(self._journal),
@@ -524,7 +525,7 @@ class Cable:
     @contextmanager
     def _carrier(self) -> Iterator[str]:
         """A stopped container mounting the volume, for `docker cp` to target."""
-        created = _docker(
+        created = run_docker(
             [
                 self._docker, "create", "--volume", f"{self._cable_volume}:{RUN_DIR}",
                 CARRIER_IMAGE, "true",
@@ -549,12 +550,12 @@ class Cable:
         """
         deadline = time.monotonic() + GATEWAY_START_SECONDS
         while time.monotonic() < deadline:
-            logs = _docker(
+            logs = run_docker(
                 [self._docker, "logs", self.container], timeout=DOCKER_TIMEOUT_SECONDS
             )
             if "gateway listening" in (logs.stdout + logs.stderr):
                 return
-            state = _docker(
+            state = run_docker(
                 [self._docker, "inspect", "-f", "{{.State.Status}}", self.container],
                 timeout=DOCKER_TIMEOUT_SECONDS,
             )
@@ -569,6 +570,6 @@ class Cable:
 def _quietly(docker: str, argv: list[str]) -> None:
     """Best-effort teardown. Never raises: a failed cleanup must not mask the real error."""
     try:
-        _docker([docker, *argv], timeout=DOCKER_TIMEOUT_SECONDS)
+        run_docker([docker, *argv], timeout=DOCKER_TIMEOUT_SECONDS)
     except SandboxError as exc:  # docker missing, or not answering
         log.warning("could not tear down", extra={"argv": argv, "error": str(exc)})

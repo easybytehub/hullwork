@@ -37,7 +37,7 @@ jobs:
       # The one write this needs, and it writes findings rather than code.
       security-events: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: github/codeql-action/init@c3400c2f38909e0dcf3c3a41f2030a8217be5d3e  # v3
         with:
           languages: python
@@ -51,4 +51,4 @@ jobs:
           # declares four module-level names the framework reads by name, so one quality rule fired
           # 89 times on code that is correct.
           config-file: ./.github/codeql/config.yml
-      - uses: github/codeql-action/analyze@c4dd10e44af883a891fe31ced449bcb4a6728b9b  # v3
+      - uses: github/codeql-action/analyze@c3400c2f38909e0dcf3c3a41f2030a8217be5d3e  # v3
