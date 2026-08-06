@@ -5,6 +5,8 @@ types cleanly under mypy strict, FastAPI runs `def` endpoints in a threadpool an
 would cost every future contributor something it never earns back.
 """
 
+import os
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import lru_cache
@@ -29,6 +31,9 @@ from hullwork.config import ConfigError
 #: behaviour depends on should not arrive from a driver default that a future `connect_args`, driver
 #: swap or Python release can change without anybody noticing.
 BUSY_TIMEOUT_MS = 5000
+
+#: What a host can look like. Only used to decide whether a parsed URL is worth quoting back.
+_PLAUSIBLE_HOST = re.compile(r"[A-Za-z0-9._-]+")
 
 
 def _the_driver_has_to_be_installed(url: str) -> None:
@@ -139,3 +144,84 @@ def session_scope(factory: sessionmaker[Session]) -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+def where_this_database_is(url: str) -> str:
+    """Where a reader should go looking, in the words of the setting rather than of an exception.
+
+    **From the setting on purpose** (item 156). A driver's message names what *it* was handed —
+    sometimes a path, sometimes nothing at all — and for Postgres there is no file to name, so
+    quoting the exception would invent one. `HULLWORK_DATABASE_URL` is what the operator typed, and
+    what they will edit.
+
+    The password never appears: `make_url` parses it out, and this rebuilds the address by hand from
+    the parts that are safe to print.
+    """
+    if url.startswith("sqlite"):
+        path = url.split("sqlite://", 1)[-1].lstrip("/")
+        return f"the file /{path}" if path else "an in-memory database"
+    try:
+        parsed = make_url(url)
+    # An unparseable URL is still worth answering about.
+    except Exception:
+        return "the database HULLWORK_DATABASE_URL names"
+
+    where = parsed.host or "localhost"
+    # **`make_url` parses almost anything**, which the test found: `postgres://[not a url` came back
+    # with a host of `[not a url`, and the sentence read *"the default database on [not a url"*.
+    # Echoing garbage back at somebody who mistyped a URL is worse than declining to name it.
+    if not _PLAUSIBLE_HOST.fullmatch(where):
+        return "the database HULLWORK_DATABASE_URL names"
+    if parsed.port:
+        where = f"{where}:{parsed.port}"
+    return f"{parsed.database or 'the default database'} on {where}"
+
+
+def why_the_database_would_not_open(url: str, failure: BaseException) -> str:
+    """A sentence for a database that will not answer, instead of eleven frames of SQLAlchemy.
+
+    **Measured inside the published image** (item 156): with the SQLite file overwritten by bytes
+    that are not a database — a half-copied volume, a truncated restore, a `docker cp` of the wrong
+    file — `hullwork projects list` printed a traceback whose last line was a link to SQLAlchemy's
+    error index. The good diagnosis, *"file is not a database"*, was the eleventh line up.
+
+    **Three answers, not one** (item 076's distinction, kept). *Not a database*, *nowhere to open
+    one*, and *a database with the wrong schema in it* need different remedies, so a single
+    "database problem" here would be a regression: `doctor.database_built` exists to tell the last
+    two apart, and this names it rather than guessing on its behalf.
+    """
+    said = str(failure).lower()
+    where = where_this_database_is(url)
+
+    if "file is not a database" in said or "not a database" in said:
+        return (
+            f"{where} is not a database.\n"
+            f"  Something else is at that path — a half-copied volume, a truncated restore, or a\n"
+            f"  file that was never a database. Nothing here can repair it; move it aside and let\n"
+            f"  the receiver's entrypoint build a new one, or restore a backup over it.\n"
+            f"  `hullwork doctor` tells this apart from an empty database and from one holding\n"
+            f"  another build's schema, which need different answers."
+        )
+    if "unable to open database file" in said or "no such file" in said:
+        return (
+            f"{where} could not be opened.\n"
+            f"  The usual causes are a directory that does not exist, a volume left unmounted,\n"
+            f"  or a file this process cannot write — it runs as uid {os.getuid()}.\n"
+            f"  `hullwork doctor` reports the whole environment, including what it can reach."
+        )
+    if "no such table" in said:
+        return (
+            f"{where} has no schema in it.\n"
+            f"  The receiver applies migrations in its entrypoint; every other program only uses\n"
+            f"  what it finds. If this is a new deployment, start the receiver once.\n"
+            f"  `hullwork doctor` says which tables are missing — the difference between a\n"
+            f"  database that was never built and one a migration has not reached."
+        )
+
+    # Not one of the three, so the driver's own words — and only its own words, on one line, since
+    # the frames above them belong to SQLAlchemy and help nobody.
+    first = str(failure).strip().splitlines()[0]
+    return (
+        f"{where} would not answer: {first}\n"
+        f"  `hullwork doctor` reports the whole environment; it is the next thing to run."
+    )

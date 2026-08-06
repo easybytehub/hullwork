@@ -506,6 +506,22 @@ def notice(host: str) -> str:
     )
 
 
+def notice_line(host: str) -> str:
+    """The notice, in one line, for a command rather than a service. Item 157.
+
+    **Ten lines on every `hullwork status` would be the wrong kind of honest.** The two long-running
+    programs start once and print the paragraph; a command runs in a loop, in a script, in a
+    `watch`, and a disclosure nobody can scroll past becomes a disclosure nobody reads.
+
+    So: where it goes, how to see exactly what, and how to stop it — which is the whole of what
+    somebody needs in the moment, with the paragraph one command away.
+    """
+    return (
+        f"reporting this command's own crashes to {host} "
+        f"(see: hullwork config --telemetry · stop: HULLWORK_TELEMETRY=off)"
+    )
+
+
 def named_host(dsn: str) -> str:
     """The host a DSN points at, for `hullwork config` to print. **Never the key.**
 

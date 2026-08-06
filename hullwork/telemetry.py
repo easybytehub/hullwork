@@ -17,6 +17,7 @@ in the Dockerfile. The lesson kept: an event is scrubbed where you looked, and t
 from places you did not.
 """
 
+import atexit
 import json
 import logging
 import sys
@@ -173,6 +174,36 @@ def make_before_send(
     return before_send
 
 
+def _report_crashes_without_the_sdk(
+    destination: Destination, *, notify: TextIO | None = None
+) -> None:
+    """Report a command's unhandled crash upstream, with no SDK in the process.
+
+    **What it does not do** is the reason this is safe to be so small: it does not touch the
+    traceback Python prints, it does not swallow anything, and it does not run for a `SystemExit` or
+    a `KeyboardInterrupt` — neither is a defect, and somebody pressing ctrl-c is not a bug report.
+    """
+    global _upstream
+    _upstream = destination
+    print(upstream_module.notice_line(destination.host), file=notify or sys.stderr)
+
+    previous = sys.excepthook
+
+    def report_then_print(kind: type[BaseException], value: BaseException, tb: Any) -> None:  # noqa: ANN401
+        if not isinstance(value, KeyboardInterrupt | SystemExit):
+            try:
+                destination.offer(upstream_module.event_for_a_crash_here(value))
+            # Reporting a crash must not replace it.
+            except Exception:
+                log.debug("could not report this crash upstream", exc_info=True)
+        previous(kind, value, tb)
+
+    sys.excepthook = report_then_print
+    # The same reason as the SDK path: a daemon thread dies with the interpreter, and a command's
+    # interpreter exits the moment the traceback is printed.
+    atexit.register(destination.close)
+
+
 def _a_transport_that_sends_nothing() -> Any:  # noqa: ANN401 - a Transport, imported lazily
     """A transport for the client that exists only to *build* events.
 
@@ -206,6 +237,7 @@ def configure_error_reporting(
     operation: str = upstream_module.UNKNOWN,
     session_factory: Callable[[], Any] | None = None,
     notify: TextIO | None = None,
+    brief: bool = False,
 ) -> bool:
     """Point Hullwork's own errors at a tracker. Returns whether reporting was switched on.
 
@@ -216,6 +248,9 @@ def configure_error_reporting(
 
     * `HULLWORK_ERROR_DSN` — the operator's tracker, the whole event, scrubbed. Theirs.
     * the DSN baked into a published image — a constructed payload, ours. Nothing in a checkout.
+
+    `brief` picks which notice is printed: the paragraph for a program that starts once, one line
+    for a command that runs in a loop (item 157).
 
     `operation` and `session_factory` only feed the second one: the label an upstream report is
     counted under, and where its installation identifier is read from. A caller that passes neither
@@ -231,6 +266,21 @@ def configure_error_reporting(
 
     if settings.error_dsn is None and destination is None:
         return False
+
+    if brief and settings.error_dsn is None and destination is not None:
+        # **A command does not need an SDK to report its own crash** (item 157, and this is what its
+        # cost criterion bought). Measured: arming the SDK added **157 ms to the median
+        # `hullwork status`, 43%** — on a command people run in a loop, in a `watch`, in a script.
+        #
+        # What the SDK is for in the two long-running programs is catching what a framework already
+        # caught: an exception Starlette handles never reaches `sys.excepthook`, and its
+        # `LoggingIntegration` sees it through `log.exception`. A command has no framework, so its
+        # crashes leave exactly one way — and `upstream.event_for_a_crash_here` already builds the
+        # event from a live traceback for `config --telemetry`.
+        #
+        # So the light path: no import, no client, the same constructor, the same payload.
+        _report_crashes_without_the_sdk(destination, notify=notify)
+        return True
 
     try:
         import sentry_sdk
@@ -253,11 +303,29 @@ def configure_error_reporting(
     global _upstream
     _upstream = destination
 
+    if destination is not None:
+        # **A short process dies before its own crash report leaves** (item 157). `offer` posts from
+        # a daemon thread so a crash handler never blocks, and a daemon thread is killed the instant
+        # the interpreter exits — which for a command is immediately after the traceback prints.
+        # Measured: a real crash in `hullwork projects list`, a real SDK, a real ingest, **zero**
+        # envelopes received. The service survives this because its shutdown calls `close`; the
+        # fifteen commands had nothing to call it.
+        #
+        # `atexit` rather than another call site, because the correct place to wait is *wherever the
+        # process ends* and no caller can be relied on to know where that is. Two seconds, then not:
+        # a report is a convenience for us and a delay is a cost to them.
+        atexit.register(destination.close)
+
     # **Before the SDK is armed, so nothing can have been sent when this returns** (item 153). On
     # `stderr` and not through the logger: a `json` formatter turns this into a field somebody has
     # to go looking for, and the point is that it is in front of the person starting the process.
     if destination is not None:
-        print(upstream_module.notice(destination.host), file=notify or sys.stderr)
+        said = (
+            upstream_module.notice_line(destination.host)
+            if brief
+            else upstream_module.notice(destination.host)
+        )
+        print(said, file=notify or sys.stderr)
 
     sentry_sdk.init(
         # **The DSN here is only ever the operator's.** When they have none, the client still has to

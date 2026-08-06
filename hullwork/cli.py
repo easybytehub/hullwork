@@ -24,11 +24,13 @@ from pathlib import Path
 from typing import TextIO
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from hullwork import (
     __version__,
     credentials,
+    db,
     doctor,
     lease,
     outcomes,
@@ -41,6 +43,7 @@ from hullwork import (
     triage,
     work,
 )
+from hullwork import upstream as upstream_module
 from hullwork.config import ConfigError, Settings, get_settings
 from hullwork.credentials import PushCapability
 from hullwork.db import get_engine, make_session_factory
@@ -2991,6 +2994,27 @@ SANDBOX_FAILURES = (BundleError, EgressError, ImageBuildError, SandboxError, Ser
                     UnsafePathError)
 
 
+def _label(args: argparse.Namespace) -> str:
+    """What an upstream report from this command is counted under. Item 157."""
+    return f"cli:{getattr(args, 'group', None) or upstream_module.UNKNOWN}"
+
+
+def _arm_reporting_quietly(args: argparse.Namespace) -> None:
+    """Reporting for a command that runs before a deployment exists, and never at its expense.
+
+    **Everything is swallowed here on purpose.** `init` writes a deployment's first two files, so it
+    must work when the environment is empty or wrong — its own comment below says so. Refusing it
+    because *error reporting* could not be set up would invert the priority completely.
+
+    Which means `hullwork init` reports its crashes only when the environment is already valid. That
+    is a real gap and it is the honest one: the alternative is a command that cannot run.
+    """
+    try:
+        configure_error_reporting(get_settings(), operation=_label(args), brief=True)
+    except Exception:
+        log.debug("could not arm error reporting for a scaffolding command", exc_info=True)
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
     """Entry point. Returns an exit code and never raises at an operator."""
     args = build_parser().parse_args(argv)
@@ -2998,6 +3022,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
     if scaffolding is not None:
         # Before `get_settings`, before the logger, before the database — a command that writes a
         # deployment's first two files cannot require the deployment to exist.
+        _arm_reporting_quietly(args)
         try:
             answered: int = scaffolding(args, out)
             return answered
@@ -3017,6 +3042,23 @@ def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
         configure_logging(
             level=settings.log_level, log_format=settings.log_format, secrets=_redactions(settings)
         )
+        # **Every command, not only `work`** (item 157). Measured: with a DSN configured, a crash in
+        # `hullwork projects list` sent nothing at all — `configure_error_reporting` was called from
+        # one subcommand out of sixteen, so an operator reading `error reporting: on` in `status`
+        # had been told something true about the service and false about the tool.
+        #
+        # `init`, `projects add` and `try` are the first three commands a stranger runs, before
+        # there is a service to report anything, and they were the silent ones.
+        #
+        # Not for `work`: it arms its own further down, with a session, so its reports carry this
+        # installation's identifier. Arming here as well would print the notice twice.
+        #
+        # **A caught failure is still not an event.** `CommandError`, the sandbox's declared
+        # failures, `ConfigError` and a database that will not answer are all handled below and
+        # never reach an excepthook — which is what keeps item 120's boundary intact: a refusal is
+        # not a defect.
+        if getattr(args, "group", None) != "work":
+            configure_error_reporting(settings, operation=_label(args), brief=True)
         # **A command that brings its own database must not be handed one** (item 140). `try` runs
         # against a checkout with no deployment behind it, and `HULLWORK_DATABASE_URL` defaults to
         # `sqlite:///./hullwork.db` — so opening a session here would create a file in the
@@ -3046,6 +3088,22 @@ def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
         # `*Error` in `hullwork/sandbox/` is in this tuple, so the seventh one cannot arrive
         # unhandled the way the first one did.
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except SQLAlchemyError as exc:
+        # **A database that will not answer is an operator's problem, not a stack trace** (item
+        # 156). Measured inside the published image with the SQLite file overwritten by bytes that
+        # are not a database: `hullwork projects list` printed eleven frames whose last line was a
+        # link to SQLAlchemy's error index, and the good diagnosis — *"file is not a database"* —
+        # was three lines from the top where nobody reads.
+        #
+        # Only what SQLAlchemy declares, for the reason the tuple above exists: an unexpected error
+        # is a bug and still gets its traceback. The database URL comes from the settings rather
+        # than from the exception, so the sentence names a path the reader can edit — and for
+        # Postgres, a host and a database instead of a file that does not exist.
+        print(
+            f"error: {db.why_the_database_would_not_open(get_settings().database_url, exc)}",
+            file=sys.stderr,
+        )
         return 1
     except ConfigError as exc:
         # **Nobody had ever seen this message**, and it is a good one — it names the variable and
