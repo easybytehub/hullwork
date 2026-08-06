@@ -326,9 +326,12 @@ def test_the_first_sweep_needs_confirming(
     monkeypatch.setenv("HULLWORK_TRACKER_ORG", "easybyte-hub")
     get_settings.cache_clear()
 
-    import hullwork.cli as cli
-
-    monkeypatch.setattr(cli, "make_inventory", lambda _settings: _Inventory([_issue("12")]))
+    # By string, not through a module object: importing `hullwork.cli` here as well as at the top
+    # of the file is the mixed-import shape `py/import-and-import-from` names, and patching the
+    # target by name is the pattern item 162 settled on for exactly this reason.
+    monkeypatch.setattr(
+        "hullwork.cli.make_inventory", lambda _settings: _Inventory([_issue("12")])
+    )
 
     out = io.StringIO()
     assert cli_main(["sweep", "hullwork"], out=out) == 0
@@ -350,9 +353,9 @@ def test_from_now_adopts_the_present_without_filing_the_backlog(
     monkeypatch.setenv("HULLWORK_TRACKER_ORG", "easybyte-hub")
     get_settings.cache_clear()
 
-    import hullwork.cli as cli
-
-    monkeypatch.setattr(cli, "make_inventory", lambda _settings: _Inventory([_issue("12")]))
+    monkeypatch.setattr(
+        "hullwork.cli.make_inventory", lambda _settings: _Inventory([_issue("12")])
+    )
 
     out = io.StringIO()
     assert cli_main(["sweep", "hullwork", "--from-now"], out=out) == 0

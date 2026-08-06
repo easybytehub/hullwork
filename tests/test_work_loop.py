@@ -7,6 +7,7 @@ duration. So the gate that matters most here is the one asserting no socket is e
 """
 
 import argparse
+import importlib
 import io
 import socket
 from datetime import UTC, datetime, timedelta
@@ -150,7 +151,11 @@ def test_the_loop_binds_no_socket() -> None:
     check would need to enumerate the process's own sockets, which needs a dependency this project
     does not have — and `socket` being imported below is this test's, not the loop's.
     """
-    import hullwork.cli
+    # **Asked for as a module object, because that is what this test reads.** It walks `vars()`,
+    # looks for an `app` attribute and for module-level sockets — the module *as data*, not names
+    # out of it. `import hullwork.cli` here would also be the second import shape in a file that
+    # already does `from hullwork.cli import main`, which is what `py/import-and-import-from` names.
+    cli = importlib.import_module("hullwork.cli")
 
     forbidden = {"uvicorn", "fastapi", "starlette", "http.server", "socketserver"}
     reached = set()
@@ -160,21 +165,21 @@ def test_the_loop_binds_no_socket() -> None:
         if module_name in seen:
             return
         seen.add(module_name)
-        module = __import__(module_name, fromlist=["_"])
+        module = importlib.import_module(module_name)
         for attr in vars(module).values():
             name = getattr(attr, "__name__", None)
             if isinstance(name, str) and name.split(".")[0] in forbidden:
                 reached.add(name)
 
-    walk(hullwork.cli.__name__)
+    walk(cli.__name__)
     walk(lease.__name__)
     walk("hullwork.work")
 
     assert not reached, f"the dispatcher's module graph reaches a server: {sorted(reached)}"
-    assert not hasattr(hullwork.cli, "app"), "the CLI must not carry an ASGI application"
+    assert not hasattr(cli, "app"), "the CLI must not carry an ASGI application"
     # And the loop must not be holding a listening socket type by accident either.
     assert not any(
-        isinstance(value, socket.socket) for value in vars(hullwork.cli).values()
+        isinstance(value, socket.socket) for value in vars(cli).values()
     ), "a module-level socket in the CLI is a listener waiting to happen"
 
 
