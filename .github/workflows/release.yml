@@ -11,9 +11,12 @@
 # twice on the primary. This one carries a repository guard instead, so it is visible and reviewable in
 # both places and executes in exactly one.
 #
-# **No third-party actions.** `docker` and `gh` are on the runner, so the only things to pin are the two
-# actions the CI already pins. A release workflow is the worst place to widen a supply chain: it holds a
-# token that can write packages and publish releases.
+# **Three actions, and each one earns its place.** A release workflow is the worst place to widen a
+# supply chain: it holds a token that can write packages and publish releases. `docker` and `gh` are on
+# the runner, so the work itself needs nothing. What is here beyond `checkout` and `setup-python` is
+# `attest-build-provenance`, which signs the wheel and the image through GitHub's own OIDC — the
+# alternative being a signing key of ours to store, rotate and eventually leak. All pinned to full
+# commit SHAs, which a test in `tests/` enforces across every workflow in the repository.
 name: release
 
 on:
@@ -21,8 +24,15 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write   # create the release, attach the wheel
-  packages: write   # push the image to ghcr.io
+  contents: write        # create the release, attach the wheel
+  packages: write        # push the image to ghcr.io
+  # **Provenance, and the two permissions it needs** (OpenSSF Scorecard's Signed-Releases). Neither
+  # is a signing key: GitHub mints a short-lived OIDC token for this run, signs with it, and records
+  # the attestation publicly. So there is no key to store, rotate or lose — and what the signature
+  # says is *which commit, which workflow and which runner produced this artefact*, which is the only
+  # question a stranger pulling our image can actually check.
+  id-token: write
+  attestations: write
 
 jobs:
   publish:
@@ -65,6 +75,7 @@ jobs:
           python -m build --wheel
 
       - name: Push the image
+        id: image
         env:
           VERSION: ${{ steps.version.outputs.version }}
           STABLE: ${{ steps.version.outputs.stable }}
@@ -97,7 +108,30 @@ jobs:
           # public write-only DSN, so its presence in the image is expected rather than a leak.
           docker buildx build --platform linux/amd64,linux/arm64 \
             --build-arg EXTRAS='[postgres,telemetry]' \
-            --build-arg UPSTREAM_DSN="${UPSTREAM_DSN}" "${tags[@]}" --push .
+            --build-arg UPSTREAM_DSN="${UPSTREAM_DSN}" "${tags[@]}" \
+            --metadata-file metadata.json --push .
+          # The digest of what was actually pushed, read from the build rather than guessed by
+          # inspecting the tag afterwards: a tag can move between the push and the read, and then the
+          # attestation would describe something other than what shipped.
+          digest=$(python -c "import json; print(json.load(open('metadata.json'))['containerimage.digest'])")
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "name=$image" >> "$GITHUB_OUTPUT"
+
+      # **Provenance for both artefacts, before the release exists.** In this order on purpose: an
+      # attestation that arrives after the release is one that somebody could have downloaded without.
+      - name: Attest the wheel
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+        with:
+          subject-path: dist/*.whl
+
+      - name: Attest the image
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          # Stored beside the image in the registry, so `gh attestation verify oci://…` works for
+          # somebody who has the image and not this repository.
+          push-to-registry: true
 
       # `--verify-tag` so a release cannot be created for a tag that was deleted between the push and
       # this step, and `--notes-from-tag` because the annotation is where the notes belong: it travels

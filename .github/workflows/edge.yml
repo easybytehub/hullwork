@@ -1,0 +1,71 @@
+# An image for every commit on `main`, so that measuring does not cost a version.
+#
+# **Why this exists, in one measured sentence.** On 2026-08-06 this project cut four releases in
+# nineteen hours — `0.1.0a1` through `0.1.0a4` — and not one of them was because there was something
+# new to offer. Each existed because a gate demands *"a container running the published image"*, so
+# every time the artefact could not do something, the only way to prove the fix was to publish another
+# version. Four promises to strangers to settle three measurements of ours.
+#
+# A version tag is a claim that a state is worth pinning. `edge` is a claim that a commit built. They
+# are different promises and they now have different mechanisms, which is what Caddy, Grafana and
+# Traefik have always done.
+#
+# **`edge` is not `latest`.** `latest` still only moves for a plain `N.N.N` release (see
+# `release.yml`), and for a pre-alpha it does not move at all. Nobody should run `edge` in production
+# and `docs/releasing.md` says so where somebody would look.
+name: edge
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+# One build at a time, and a newer push wins. Two publications a minute apart used to mean two builds
+# racing for the same tag, and whichever finished last defined `edge` — which is a coin toss dressed
+# as a pointer.
+concurrency:
+  group: edge
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository == 'easybytehub/hullwork'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      - name: Push edge and the commit
+        id: image
+        env:
+          # The same destination the release bakes in. An `edge` image that reported nowhere would be
+          # useless for exactly the measurements this workflow exists to make cheap.
+          UPSTREAM_DSN: ${{ secrets.UPSTREAM_DSN }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          image="ghcr.io/${{ github.repository }}"
+          short="${GITHUB_SHA::7}"
+          # Two tags, and the second is the one that matters. `edge` moves, so a measurement recorded
+          # against it cannot be repeated; `sha-<commit>` is immutable, which is what a written-down
+          # result needs to still mean something in a month.
+          docker buildx create --use --name edge
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --build-arg EXTRAS='[postgres,telemetry]' \
+            --build-arg UPSTREAM_DSN="${UPSTREAM_DSN}" \
+            --tag "$image:edge" --tag "$image:sha-$short" \
+            --metadata-file metadata.json --push .
+          digest=$(python3 -c "import json; print(json.load(open('metadata.json'))['containerimage.digest'])")
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "name=$image" >> "$GITHUB_OUTPUT"
+
+      # Provenance for `edge` too. An unsigned artefact that exists to be measured is an artefact
+      # whose measurements cannot be attributed to a commit.
+      - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45  # v2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true

@@ -1,0 +1,48 @@
+# Static analysis, from a tool nobody here wrote. OpenSSF Scorecard's SAST check.
+#
+# **Why this, when `ruff` already runs bandit's rules.** It does — `S`-prefixed rules are on, and they
+# have caught real things in this repository. What they cannot do is reason across function
+# boundaries: CodeQL follows a value from where it enters to where it is used, which is the shape of
+# every finding that matters here. This project takes attacker-authored input (an error payload), hands
+# it to a model, and runs the result in a sandbox; *where does untrusted data reach* is the question,
+# and a linter answers it one line at a time.
+#
+# **This file only exists on the public mirror.** CodeQL is a GitHub feature; the primary forge is
+# Forgejo, which has no equivalent, so `scripts/publish.sh` copies this across and the private
+# repository never runs it. That is worth saying out loud: it means findings arrive **after** a change
+# is public, which is the wrong order and the best available one. The gates that run before anything
+# lands are still `ruff`, `mypy` and `pytest`.
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, because CodeQL's own queries improve without this repository changing: a finding can
+    # appear in code nobody has touched since the last run.
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyse:
+    # Only on the mirror. On the primary forge this job does not exist, and a copy of it that ran
+    # would fail on every push for the life of the repository.
+    if: github.repository == 'easybytehub/hullwork'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The one write this needs, and it writes findings rather than code.
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: github/codeql-action/init@c3400c2f38909e0dcf3c3a41f2030a8217be5d3e  # v3
+        with:
+          languages: python
+          # `security-and-quality` rather than the default `security` set: this codebase is read by
+          # strangers evaluating whether to trust it, so a query about a bare `except` is worth the
+          # noise it adds.
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@c3400c2f38909e0dcf3c3a41f2030a8217be5d3e  # v3
