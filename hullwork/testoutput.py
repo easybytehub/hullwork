@@ -31,12 +31,6 @@ from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
-#: pytest's summary line, in either order and with or without the other counts.
-_PYTEST = re.compile(
-    r"(?:^|\s)(?:(?P<failed>\d+)\s+failed)?[,\s]*(?:(?P<passed>\d+)\s+passed)?"
-    r"[,\s]*(?:(?P<errors>\d+)\s+error)?",
-)
-
 #: The counts, wherever they appear. Deliberately several small patterns rather than one clever one:
 #: a regex that matches every runner matches things that are not runners.
 _PATTERNS = (

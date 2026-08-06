@@ -43,6 +43,12 @@ jobs:
           languages: python
           # `security-and-quality` rather than the default `security` set: this codebase is read by
           # strangers evaluating whether to trust it, so a query about a bare `except` is worth the
-          # noise it adds.
+          # noise it adds. **Measured, and it earned its keep**: the first run found three constants
+          # that were fossils of superseded designs, two of them contradicting the comment beside the
+          # code that replaced them.
           queries: security-and-quality
+          # Which excludes `migrations/versions`, and the file says why: every Alembic migration
+          # declares four module-level names the framework reads by name, so one quality rule fired
+          # 89 times on code that is correct.
+          config-file: ./.github/codeql/config.yml
       - uses: github/codeql-action/analyze@c3400c2f38909e0dcf3c3a41f2030a8217be5d3e  # v3

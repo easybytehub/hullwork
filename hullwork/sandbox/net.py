@@ -88,46 +88,6 @@ DOCKER_TIMEOUT_SECONDS = 120
 #: How long to wait for the cable to be listening before calling it dead.
 CABLE_READY_SECONDS = 20
 
-#: The forwarder, as a program rather than a dependency. `sys.argv` carries the upstream port so the
-#: same source works for any gateway, and the source is ours — item 017's rule is that the host
-#: never runs a string a repository supplied, and this string comes from here.
-_CABLE_PROGRAM = """
-import socket, sys, threading
-upstream_host, upstream_port = sys.argv[1], int(sys.argv[2])
-
-def pump(source, sink):
-    try:
-        while True:
-            chunk = source.recv(65536)
-            if not chunk:
-                break
-            sink.sendall(chunk)
-    except OSError:
-        pass
-    finally:
-        for side in (source, sink):
-            try:
-                side.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            side.close()
-
-listener = socket.socket()
-listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-listener.bind(("0.0.0.0", int(sys.argv[3])))
-listener.listen(64)
-print("cable up", flush=True)
-while True:
-    client, _ = listener.accept()
-    try:
-        upstream = socket.create_connection((upstream_host, upstream_port), timeout=15)
-    except OSError:
-        client.close()
-        continue
-    threading.Thread(target=pump, args=(client, upstream), daemon=True).start()
-    threading.Thread(target=pump, args=(upstream, client), daemon=True).start()
-"""
-
 #: The probe that must fail. A hostname, so it exercises DNS as well as routing — DNS exfiltration
 #: is the path §4.4 closed by having no resolver at all, and a probe against a bare IP would not
 #: notice if a resolver came back.

@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol, runtime_checkable
+from urllib.parse import urlsplit
 
 #: Marker embedded in the issue body so an item can be found again without relying on the title,
 #: which humans edit. Verified searchable against a live Forgejo on 2026-07-27.
@@ -231,8 +232,14 @@ def is_github(url: str) -> bool:
     question without going near the guarded ingest path. A second copy of a two-line rule is the
     failure this project has now found four times.
     """
-    host = url.lower()
-    return "github.com" in host or host.rstrip("/").endswith("api.github.com")
+    # **The host, parsed — not a substring of the URL.** CodeQL found the previous version, and it
+    # was right: `"github.com" in url` answers yes for `https://github.com.evil.example/`, for
+    # `https://notgithub.com/`, and for any URL carrying the string in a query. What that decides is
+    # which client shape gets built and **which scope probe gets sent** (item 131), so a spoofable
+    # answer is a request shaped for one forge arriving at another.
+    parsed = urlsplit(url if "://" in url else f"https://{url}")
+    host = (parsed.hostname or "").lower()
+    return host == "github.com" or host.endswith(".github.com")
 
 
 #: A release string that can be compared against a commit: forty hex characters, or the

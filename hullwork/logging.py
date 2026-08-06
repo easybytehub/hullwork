@@ -23,6 +23,7 @@ day when a credential is in the message.
 
 import json
 import logging
+import re
 import sys
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -49,6 +50,34 @@ _STANDARD_ATTRS = frozenset(
 )
 
 
+#: Every control character, including the two that forge a log line. `\n` and `\r` are the attack;
+#: the rest are here because a terminal reading `\x1b[2J` from a log field is a different kind of
+#: surprise, and there is no field in this system whose legitimate value contains one.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _one_line(value: Any) -> Any:  # noqa: ANN401 - log payloads are arbitrary by nature
+    """Flatten control characters in anything on its way to a log, however deeply nested.
+
+    **CodeQL found this, and it is real in one of the two formats.** `webhooks.py` logs the project
+    slug of a *rejected* delivery, and a slug arrives from the URL path — where `%0A` is decoded to
+    a newline before FastAPI hands it over. In `json` format the serialiser escapes it, so nothing
+    happens; in `text` format, which is what a person tails, one request could write a second line
+    that looks exactly like a log entry of ours.
+
+    Fixed here rather than at the call site because there are dozens of call sites and one filter,
+    and the next field somebody logs from a request will not remember this. The value is not
+    rejected: a log that drops what it could not print is a log that hides the attempt.
+    """
+    if isinstance(value, str):
+        return _CONTROL.sub("\u241b", value)
+    if isinstance(value, dict):
+        return {key: _one_line(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return type(value)(_one_line(item) for item in value)
+    return value
+
+
 class RedactingFilter(logging.Filter):
     """Blanks known secret values and sensitively-named fields before anything is formatted."""
 
@@ -65,7 +94,7 @@ class RedactingFilter(logging.Filter):
         self._scrubber.add_secret(value)
 
     def _scrub(self, value: Any) -> Any:  # noqa: ANN401 - log payloads are arbitrary by nature
-        return self._scrubber.scrub(value)
+        return _one_line(self._scrubber.scrub(value))
 
     def filter(self, record: logging.LogRecord) -> bool:
         # Render the message now: after this the args are spent, and redacting the rendered
