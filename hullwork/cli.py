@@ -34,6 +34,7 @@ from hullwork import (
     db,
     doctor,
     lease,
+    operator,
     outcomes,
     page,
     propose,
@@ -44,6 +45,7 @@ from hullwork import (
     triage,
     work,
 )
+from hullwork import decisions as decide
 from hullwork import upstream as upstream_module
 from hullwork.config import ConfigError, Settings, get_settings
 from hullwork.credentials import PushCapability
@@ -897,36 +899,24 @@ def _cmd_rotate(
 def approve(session: Session, slug: str, item_id: int) -> Item:
     """Let an agent attempt one amber item. One item, named explicitly, by a human.
 
-    A command rather than an endpoint, for the reason registration is one: the operator already has
-    the host, and an approval endpoint would be a permanent attack surface for something done by one
-    person a handful of times. There is deliberately no `--all`.
+    **The decision itself moved to `decisions.py` in item 166**, because the page grew a button and
+    a route would otherwise import a command from here — the shape item 162 removed from `sandbox/`.
+    What stays is this signature, which takes a slug because a person types a slug, and the mapping
+    from the decision's refusal to this module's.
+
+    The comment that used to live here argued that approval should be a command and never an
+    endpoint: *"the operator already has the host, and an approval endpoint would be a permanent
+    attack surface for something done by one person a handful of times."* Item 166 reversed it, with
+    the ground it stood on: the operator no longer *has* the host in any useful sense — reading the
+    page happens on a laptop and acting meant SSH, `docker compose exec` and this command, which
+    measured out at two items waiting twenty-one hours on an instance somebody was looking at. The
+    attack surface is still real, which is why the endpoint needs a second credential that never
+    appears in a URL.
     """
-    project = _require(session, slug)
-    item = (
-        session.query(Item)
-        .filter(Item.id == item_id, Item.project_id == project.id)
-        .one_or_none()
-    )
-    if item is None:
-        raise CommandError(f"'{slug}' has no item {item_id}")
-
-    if item.state is not ItemState.WAITING_APPROVAL:
-        # Naming the state it found is the difference between a refusal and a puzzle. An item that
-        # is already `ready`, or that a human closed, is the common case here.
-        raise CommandError(
-            f"item {item_id} is '{item.state.value}', not '{ItemState.WAITING_APPROVAL.value}' — "
-            f"only an item waiting for approval can be approved"
-        )
-
     try:
-        transition(item, ItemState.READY)
-    except IllegalTransitionError as exc:
-        # Red reaches here only if a manifest was edited underneath a queued item. The state machine
-        # refuses it whatever this command thinks, which is the point of enforcing it there.
+        return decide.approve(session, _require(session, slug), item_id)
+    except decide.DecisionError as exc:
         raise CommandError(str(exc)) from exc
-
-    session.commit()
-    return item
 
 
 def requeue(session: Session, slug: str, item_id: int) -> Item:
@@ -1206,6 +1196,49 @@ def _cmd_page_token(
         "\n"
         "  Put a reverse proxy with TLS in front before handing it to anybody: the token is a\n"
         "  path segment, so plain HTTP puts it on the wire in the clear.",
+        file=out,
+    )
+    return 0
+
+
+def _cmd_operator_key(
+    args: argparse.Namespace, session: Session, settings: Settings, out: TextIO
+) -> int:
+    """Mint the credential that **acts** on the read-only page. Item 166.
+
+    **A second credential rather than a promotion of the first**, and the difference is the whole
+    security model: the page token is a bearer string in a URL — a saved page, a screenshot of the
+    address bar, a link mailed to a colleague — so it reads everything and may never spend money.
+    This one is pasted into a form once and exchanged for a session cookie, so it never lands
+    anywhere a URL lands.
+
+    Refuses to replace an existing key without `--rotate`, for the reason `page-token` does: a
+    second person running this to "get in" would lock out the first, and the failure would read as
+    the buttons being broken rather than as a key having changed underneath them.
+    """
+    existing = operator.configured(session)
+    if existing and not args.rotate:
+        raise CommandError(
+            "this instance already has an operator key, and it cannot be shown again — it was "
+            "printed once and only its hash is stored.\n"
+            "  To replace it: hullwork operator-key --rotate. Every session open right now ends "
+            "the moment you do."
+        )
+
+    key = operator.issue_key(session)
+    print("Rotated. Every session that was open has ended." if existing else
+          "The page can now be acted on.", file=out)
+    print("\n  This key is shown once and cannot be recovered:\n", file=out)
+    print(f"    {key}\n", file=out)
+    print(
+        "  Paste it into the page's login, once per browser. Unlike the page URL it is **not** a\n"
+        "  link and must never become one: it is the difference between somebody reading this\n"
+        "  instance and somebody spending its budget.\n"
+        "\n"
+        "  What a session may then do: approve one amber item, or hand one to a human. Nothing\n"
+        "  else on the page changes anything, and there is no approve-everything.\n"
+        "\n"
+        "  Sessions last 12 hours. To end them all at once, rotate.",
         file=out,
     )
     return 0
@@ -3035,6 +3068,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="replace the existing token, invalidating every URL handed out so far",
     )
     page_token.set_defaults(func=_cmd_page_token)
+
+    operator_key = subparsers.add_parser(
+        "operator-key",
+        help="mint the credential that acts on the read-only page",
+        description=(
+            "The page reads with a token in its URL, which is why it may not act: a URL is a thing "
+            "that gets saved, screenshotted and forwarded. This mints a second credential that "
+            "never appears in a URL — pasted into a login once per browser, exchanged for a "
+            "session cookie — and it is what the two buttons on an amber item require.\n\n"
+            "Until this command runs there are no buttons, and every route that would change "
+            "something answers 404 the way an unknown path does.\n\n"
+            "Shown once, stored as a hash."
+        ),
+    )
+    operator_key.add_argument(
+        "--rotate",
+        action="store_true",
+        help="replace the existing key, ending every session that is open right now",
+    )
+    operator_key.set_defaults(func=_cmd_operator_key)
 
     pruning = subparsers.add_parser(
         "prune", help="forget the raw bodies of old deliveries, keeping every row"

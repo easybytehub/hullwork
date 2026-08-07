@@ -188,15 +188,40 @@ def test_the_policy_forbids_script_because_there_is_none(db: Session, client: Te
     assert "<script" not in answered.text.lower()
 
 
-def test_nothing_under_the_prefix_accepts_anything_but_get(client: TestClient) -> None:
-    """Read-only, asserted by walking the application's own routes rather than by trusting a
-    decorator to stay a `get` through the next refactor."""
+#: The only routes under the page prefix that may change anything. Item 166 added them and this
+#: tuple is the whole of the exception: everything else stays `GET`-only.
+_MAY_POST = (
+    f"{page.PREFIX}/{{token}}/login",
+    f"{page.PREFIX}/{{token}}/logout",
+    f"{page.PREFIX}/{{token}}/items/{{item_id}}/approve",
+    f"{page.PREFIX}/{{token}}/items/{{item_id}}/human",
+)
+
+
+def test_only_the_four_named_routes_under_the_prefix_accept_a_post(client: TestClient) -> None:
+    """**This test used to say `GET`-only, and item 166 is why it does not any more.**
+
+    The invariant it was protecting was never "no POST" — it was *no accidental mutation surface*,
+    asserted by walking the application's own routes rather than by trusting a decorator to stay a
+    `get` through the next refactor. That still holds, and it is now specific: four routes may take
+    a POST, they are named here, and a fifth appearing fails this test on the day it is written.
+
+    A view acquiring a POST by accident is what this catches, and it is worth catching: the token is
+    a bearer credential in a URL, so a mutating route that only checks the token would let anybody
+    holding a saved link spend money.
+    """
     from hullwork.main import app
 
     for route in app.routes:
         path = getattr(route, "path", "")
-        if path.startswith(page.PREFIX):
-            assert getattr(route, "methods", set()) <= {"GET", "HEAD"}, path
+        if not path.startswith(page.PREFIX):
+            continue
+        methods: set[str] = getattr(route, "methods", set())
+        allowed = {"GET", "HEAD", "POST"} if path in _MAY_POST else {"GET", "HEAD"}
+        assert methods <= allowed, path
+    # And every route named above exists: a typo here would silently stop asserting anything.
+    paths = {getattr(route, "path", "") for route in app.routes}
+    assert set(_MAY_POST) <= paths
 
 
 def test_no_credential_of_any_kind_is_in_the_page(db: Session, client: TestClient) -> None:

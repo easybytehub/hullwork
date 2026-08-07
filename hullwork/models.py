@@ -657,6 +657,67 @@ class PageAccess(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
 
 
+class OperatorKey(Base):
+    """The credential that **acts**. Item 166. One row, id 1, or none at all.
+
+    **Separate from `PageAccess` on purpose, and that separation is the whole security model.** The
+    page token is a bearer credential that lives in a URL — a saved page, a screenshot of the
+    address bar, a link mailed to a colleague — so it reads everything and may never spend money.
+    This one never appears in a URL: it is pasted into a form once, exchanged for a session, and
+    after that only the session cookie travels.
+
+    **None at all is the default, and it means the buttons do not exist.** An instance that upgrades
+    into this item is byte-identical to the one before it until somebody runs
+    `hullwork operator-key`.
+
+    Generated, never chosen. 32 random bytes hashed with SHA-256, for the reason already written
+    beside the page token: against 32 random bytes a KDF buys nothing. A human-chosen password would
+    need scrypt or argon2, a new dependency, and a guessing-rate story — three problems this does
+    not have.
+    """
+
+    __tablename__ = "operator_key"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    #: SHA-256, compared in constant time. See `security.hash_token`.
+    key_hash: Mapped[str] = mapped_column(String(64))
+
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
+
+
+class OperatorSession(Base):
+    """One browser that has proved it holds the operator key. Item 166.
+
+    **Rows rather than a signed cookie, so that revoking is deleting.** A signed cookie cannot be
+    withdrawn without rotating the signing key, which logs out everything at once and gives the
+    operator no way to end one session — and the moment a laptop is lost, "everything at once" is
+    the only option anybody has. Deleting a row is the whole of it, and
+    `hullwork operator-key --rotate` deletes them all.
+
+    The token is hashed like every other credential here. The **CSRF token is not**: it is not a
+    credential, it is a value the server hands out and expects back on the same session, and it is
+    compared in constant time for tidiness rather than for secrecy.
+    """
+
+    __tablename__ = "operator_session"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    #: SHA-256 of the value in the cookie.
+    token_hash: Mapped[str] = mapped_column(String(64), index=True)
+
+    #: Handed to the browser, returned in a hidden field, and never in a URL.
+    csrf: Mapped[str] = mapped_column(String(64))
+
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
+
+    #: When this stops being accepted. An absolute expiry rather than an idle timeout: an idle
+    #: timeout has to be written on every request, which turns a read of the page into a write to
+    #: the database — and the receiver's sweep already contends for that lock.
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime())
+
+
 class DispatcherLease(Base):
     """Who is dispatching, and when they last said so. One row, id 1. Item 075, DR-0009.
 

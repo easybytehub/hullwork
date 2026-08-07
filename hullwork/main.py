@@ -5,18 +5,21 @@ import logging
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any, Literal
+from urllib.parse import parse_qsl
 
-from fastapi import Depends, FastAPI, HTTPException, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, sessionmaker
 
-from hullwork import __version__, page, readiness
+from hullwork import __version__, operator, page, readiness
+from hullwork import decisions as decide
 from hullwork.config import ConfigError, Settings, get_settings
 from hullwork.db import get_engine, make_session_factory
 from hullwork.forge.factory import make_forge
 from hullwork.ingest import sweep
 from hullwork.logging import configure_logging
+from hullwork.models import Item
 from hullwork.readiness import record_sweep_ok
 from hullwork.telemetry import (
     configure_error_reporting,
@@ -300,6 +303,7 @@ def page_instance(
 )
 def page_instance_index(
     token: str,
+    request: Request,
     session: Annotated[Session, Depends(_readiness_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> HTMLResponse:
@@ -307,7 +311,12 @@ def page_instance_index(
     if not page.opens(session, token):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
     return HTMLResponse(
-        page.instance(session, settings, error_reporting=_reporting_enabled),
+        page.instance(
+            session,
+            settings,
+            error_reporting=_reporting_enabled,
+            acting=_acting(session, request),
+        ),
         headers=page.HEADERS,
     )
 
@@ -320,12 +329,16 @@ def page_instance_index(
 )
 def page_items(
     token: str,
+    request: Request,
     session: Annotated[Session, Depends(_readiness_session)],
+    in_: Annotated[str | None, Query(alias="in")] = None,
 ) -> HTMLResponse:
     """Every item, most recent first. Item 123."""
     if not page.opens(session, token):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
-    return HTMLResponse(page.items(session), headers=page.HEADERS)
+    return HTMLResponse(
+        page.items(session, only=in_, acting=_acting(session, request)), headers=page.HEADERS
+    )
 
 
 @app.get(
@@ -380,6 +393,7 @@ def page_project(
 def page_item(
     token: str,
     item_id: int,
+    request: Request,
     session: Annotated[Session, Depends(_readiness_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> HTMLResponse:
@@ -391,7 +405,199 @@ def page_item(
     """
     if not page.opens(session, token):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
-    rendered = page.item(session, settings, item_id)
+    rendered = page.item(session, settings, item_id, acting=_acting(session, request))
     if rendered is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
     return HTMLResponse(rendered, headers=page.HEADERS)
+
+
+#: The most a form on this page can be. Both fields are 43-character tokens; anything approaching
+#: this is not a browser filling in the login.
+_FORM_CEILING = 4096
+
+
+async def _field(request: Request, name: str) -> str | None:
+    """One field out of an `application/x-www-form-urlencoded` body, or `None`.
+
+    **Hand-parsed to keep a dependency out of the receiver.** FastAPI's `Form()` requires
+    `python-multipart`, and this is the half of Hullwork that listens on a network — every package
+    it imports is surface. The forms here are written in this file and post urlencoded, which
+    `urllib.parse` has always understood, so the dependency would buy nothing but multipart support
+    that nothing here sends.
+
+    The body is read after the length check rather than before it, for the reason the webhook
+    endpoint does the same: a declared length is refusable without allocating what it declares.
+    """
+    if "application/x-www-form-urlencoded" not in request.headers.get("content-type", ""):
+        return None
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > _FORM_CEILING:
+        return None
+    body = await request.body()
+    if len(body) > _FORM_CEILING:
+        return None
+    for key, value in parse_qsl(body.decode("utf-8", "replace"), keep_blank_values=True):
+        if key == name:
+            return value
+    return None
+
+
+def _acting(session: Session, request: Request) -> page.Acting:
+    """What this request may do, from the cookie it brought. Item 166.
+
+    Called by every page view, and it is the only place authority is decided. The renderer receives
+    the answer and never the cookie, so a view cannot accidentally treat a *read* token as
+    authority.
+    """
+    return page.Acting(
+        csrf=operator.acting(session, request.cookies.get(operator.COOKIE)),
+        offered=operator.configured(session),
+    )
+
+
+def _to_page(token: str, tail: str = "") -> RedirectResponse:
+    """Back where the operator was, as a `303`. Item 166.
+
+    **`303` and not `302`**, because the browser must turn a POST into a GET: a `302` leaves some
+    clients re-posting the form on refresh, which for `approve` would mean a second attempt.
+    """
+    return RedirectResponse(
+        f"{page.PREFIX}/{token}/{tail}",
+        status_code=status.HTTP_303_SEE_OTHER,
+        headers=page.HEADERS,
+    )
+
+
+@app.post(f"{page.PREFIX}/{{token}}/login", tags=["page"], include_in_schema=False)
+async def page_login(
+    token: str,
+    request: Request,
+    session: Annotated[Session, Depends(_readiness_session)],
+) -> RedirectResponse:
+    """Exchange the operator key for a session cookie. Item 166.
+
+    **The one route that accepts a secret in a body, and it answers the same either way.** A wrong
+    key redirects to the page exactly as a right one does: an attacker with the read link learns
+    nothing from the response about whether a key was right, and the operator finds out by whether
+    the buttons are there. No error page, because an error page is an oracle.
+
+    `Secure` is read off the request rather than hardcoded. Hardcoding it on would silently break
+    the plain-HTTP tailnet deployment this runs on — the cookie would never be sent and the login
+    would look broken; hardcoding it off would be wrong the day a TLS proxy is put in front. On the
+    tailnet the transport is encrypted by WireGuard even without it.
+    """
+    if not page.opens(session, token):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+
+    key = await _field(request, "key")
+    issued = operator.log_in(session, key) if key else None
+    redirect = _to_page(token)
+    if issued is not None:
+        cookie, _csrf = issued
+        redirect.set_cookie(
+            operator.COOKIE,
+            cookie,
+            max_age=int(operator.LIFETIME.total_seconds()),
+            httponly=True,
+            samesite="strict",
+            secure=request.url.scheme == "https",
+            path=page.PREFIX,
+        )
+    return redirect
+
+
+@app.post(f"{page.PREFIX}/{{token}}/logout", tags=["page"], include_in_schema=False)
+async def page_logout(
+    token: str,
+    request: Request,
+    session: Annotated[Session, Depends(_readiness_session)],
+) -> RedirectResponse:
+    """End this session. Item 166.
+
+    CSRF-protected like the decisions are: a forced logout is a nuisance rather than a breach, but a
+    route that skips the check is a route somebody later copies.
+    """
+    if not page.opens(session, token):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    cookie = request.cookies.get(operator.COOKIE)
+    if operator.csrf_ok(operator.acting(session, cookie), await _field(request, "csrf")):
+        operator.log_out(session, cookie)
+    redirect = _to_page(token)
+    redirect.delete_cookie(operator.COOKIE, path=page.PREFIX)
+    return redirect
+
+
+def _decide(
+    token: str,
+    item_id: int,
+    session: Session,
+    csrf: str | None,
+    what: str,
+    *,
+    cookie: str | None,
+) -> RedirectResponse:
+    """The shared body of the two decisions: authorise, act, and go back to the item. Item 166.
+
+    **Four guards, in this order, and each one is the whole of a different threat:**
+
+    1. the page token, or `404` — the same answer an unknown path gets;
+    2. a session, or `404` **again** rather than `401`: an instance with no operator key and one
+       whose cookie is wrong must be indistinguishable, or the read link becomes a way to ask
+       whether this instance can be acted on at all;
+    3. the CSRF token, or `403` — reachable only by something that already holds a valid session
+       cookie, so there is nothing left to hide from it;
+    4. the state machine, in `decisions`, which is what refuses an item that is not amber.
+    """
+    if not page.opens(session, token):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+
+    expected = operator.acting(session, cookie)
+    if expected is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    if not operator.csrf_ok(expected, csrf):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
+
+    found = session.get(Item, item_id)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    act = decide.approve if what == "approve" else decide.hand_to_human
+    try:
+        act(session, found.project, item_id)
+    except decide.DecisionError as exc:
+        # The item's own page is where the reason belongs, and it is already rendering the state
+        # that caused this. `409` says the request was well formed and the world disagreed.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    log.info("decided from the page", extra={"item": item_id, "decision": what})
+    return _to_page(token, f"items/{item_id}")
+
+
+@app.post(
+    f"{page.PREFIX}/{{token}}/items/{{item_id}}/approve", tags=["page"], include_in_schema=False
+)
+async def page_approve(
+    token: str,
+    item_id: int,
+    request: Request,
+    session: Annotated[Session, Depends(_readiness_session)],
+) -> RedirectResponse:
+    """Let the agent attempt this item. `POST` only, and that is asserted by a test.
+
+    A `GET` that approves is a URL that approves — from an image tag, a prefetch, a chat unfurling a
+    link somebody pasted. This costs money and opens a pull request, so it cannot be a link.
+    """
+    return _decide(token, item_id, session, await _field(request, "csrf"), "approve",
+                   cookie=request.cookies.get(operator.COOKIE))
+
+
+@app.post(
+    f"{page.PREFIX}/{{token}}/items/{{item_id}}/human", tags=["page"], include_in_schema=False
+)
+async def page_hand_to_human(
+    token: str,
+    item_id: int,
+    request: Request,
+    session: Annotated[Session, Depends(_readiness_session)],
+) -> RedirectResponse:
+    """Take this item away from the agent: a person will do it. `POST` only, same reasoning."""
+    return _decide(token, item_id, session, await _field(request, "csrf"), "human",
+                   cookie=request.cookies.get(operator.COOKIE))

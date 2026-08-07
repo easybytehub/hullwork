@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import html
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -237,6 +238,11 @@ a:hover { text-decoration-color: currentColor; }
 .count { font: 650 1.75rem/1 var(--mono); font-variant-numeric: tabular-nums;
          letter-spacing: -.03em; color: var(--c, var(--ink)); }
 .count.zero { color: var(--faint); font-weight: 400; }
+/* Item 166: a non-zero count is a link to the items it counted. It keeps the number's weight and
+   colour — the underline is what says it can be clicked, and only on hover so the board still reads
+   as figures rather than as a menu. */
+a.count { display: inline-block; text-decoration: none; }
+a.count:hover, a.count:focus-visible { text-decoration: underline; }
 /* A tinted number is still a number: the column heading above it carries the meaning. */
 .age { display: block; font-size: .78rem; color: var(--muted); margin-top: .35rem; }
 .col.owed { border-color: color-mix(in oklab, var(--waiting) 45%, var(--rule)); }
@@ -285,6 +291,33 @@ summary { cursor: pointer; color: var(--muted); font-size: .875rem; }
 summary:hover { color: var(--ink); }
 details > pre { border-left: 2px solid var(--rule); }
 code { font-family: var(--mono); font-size: .9em; }
+
+/* Item 166. A form is the only way to change something here, so it has to look like part of the
+   page rather than like a browser default from 1998. `.linkish` is a button that reads as a link,
+   for sign-out, where a button would claim more weight than the action has. */
+form.inline { display: inline; }
+button.linkish {
+  background: none; border: 0; padding: 0; font: inherit; color: inherit;
+  text-decoration: underline; cursor: pointer;
+}
+.decide { display: flex; gap: .6rem; flex-wrap: wrap; margin: .8rem 0 0; }
+.decide button {
+  font: inherit; padding: .45rem .9rem; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--rule); background: var(--card); color: var(--fg);
+}
+.decide button.go { border-color: var(--passed); }
+.decide form { margin: 0; }
+.login { margin: .8rem 0 0; display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+.login input {
+  font: inherit; font-family: var(--mono); padding: .4rem .5rem; min-width: 22rem;
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--card); color: var(--fg);
+}
+.next { border-left: 3px solid var(--waiting); padding-left: .8rem; margin: 1rem 0; }
+/* An item the dispatcher will never pick up. Beside the state rather than instead of it: the state
+   is still the truth, this is what the state cannot say on its own. */
+.stuck { font: 600 .7rem/1 var(--sans); letter-spacing: .04em; text-transform: uppercase;
+         color: var(--refused); border: 1px solid currentColor; border-radius: var(--r-chip);
+         padding: .15rem .35rem; margin-left: .35rem; }
 """
 
 
@@ -304,8 +337,49 @@ _FAVICON = (
 )
 
 
-def _document(title: str, body: str) -> str:
-    """The whole page. No script, no external asset, one inlined stylesheet."""
+@dataclass(frozen=True)
+class Acting:
+    """What the request being rendered may do. Item 166.
+
+    **Decided in `operator`, rendered here, and defaulting to what the page was before it existed.**
+    An instance with no operator key produces `Acting()` on every request, and every branch below
+    then takes the path it took in 0.1.0a6 — which is the acceptance criterion that keeps this item
+    from changing an instance nobody asked to change.
+    """
+
+    #: The session's CSRF token when this request may act. `None` is *read-only*, and it is the
+    #: answer for a wrong cookie, an expired session and an instance with no key alike.
+    csrf: str | None = None
+
+    #: Whether an operator key exists, which is whether offering a login is honest. Without this the
+    #: page would either show a login on an instance that can never accept one, or hide the one
+    #: affordance the operator is looking for.
+    offered: bool = False
+
+
+#: A request that may read and nothing else — the default everywhere, and the whole of what this
+#: page was before item 166.
+READING = Acting()
+
+
+def _document(title: str, body: str, *, acting: Acting = READING, up: str = "") -> str:
+    """The whole page. No script, no external asset, one inlined stylesheet.
+
+    `up` is how far this view is from `/page/<token>/`, because **every URL here is relative on
+    purpose** — that is what keeps the token out of the HTML, so a saved page or a screenshot of the
+    source carries no key. A form is a URL like any other: from `items/28` the sign-out has to post
+    to `../logout`, and hardcoding `logout` would have posted to `items/logout` and 404'd.
+    """
+    footing = (
+        "read-only. <strong>This URL is the credential</strong>: anyone who has it can read "
+        "everything on this page. Rotate it with <code>hullwork page-token --rotate</code>."
+        if acting.csrf is None
+        else "<strong>signed in</strong>, so two buttons on an amber item work and nothing else "
+        "does. The URL is still only a read credential: this browser holds the other one. "
+        f'<form method="post" action="{up}logout" class="inline">'
+        f'<input type="hidden" name="csrf" value="{_h(acting.csrf)}">'
+        '<button type="submit" class="linkish">Sign out</button></form>'
+    )
     return (
         "<!doctype html>\n"
         '<html lang="en"><head><meta charset="utf-8">'
@@ -314,10 +388,7 @@ def _document(title: str, body: str) -> str:
         f'<link rel="icon" href="{_FAVICON}">'
         f"<title>{_h(title)}</title><style>{_STYLE}</style></head><body>\n"
         f"{body}\n"
-        "<footer>Hullwork "
-        f"{_h(__version__)} — read-only. <strong>This URL is the credential</strong>: anyone who "
-        "has it can read everything on this page. Rotate it with "
-        "<code>hullwork page-token --rotate</code>.</footer>\n"
+        f"<footer>Hullwork {_h(__version__)} — {footing}</footer>\n"
         "</body></html>\n"
     )
 
@@ -381,18 +452,28 @@ def _the_credential_split(session: Session) -> str:
 #: they are why the page exists — `pr-open` gets its own rather than being folded into "open",
 #: because that queue not draining is item 138's review debt, which is the product's own failure
 #: mode and belongs in the reader's face rather than in a report.
-_COLUMNS: tuple[tuple[str, str, tuple[ItemState, ...], bool], ...] = (
-    ("Arrived", "c-idle", (ItemState.NEW, ItemState.TRIAGED, ItemState.REOPENED), False),
-    ("Waiting on you", "c-waiting", (ItemState.WAITING_APPROVAL, ItemState.HUMAN_ONLY), True),
-    ("Queued", "c-idle", (ItemState.READY,), False),
-    ("Working", "c-working", (ItemState.IN_PROGRESS,), False),
-    ("Waiting on review", "c-waiting", (ItemState.PR_OPEN,), True),
+#:
+#: Each column also carries a **key**, because item 166 made the counts links. The operator read
+#: *"Waiting on you 2"* off this board and asked *"¿y ahora qué?"*: a number with no name behind
+#: it, answerable only by leaving the page, opening the list and scanning 28 rows. The key is what
+#: `items?in=…` filters on, so a count leads to the items it counted.
+_COLUMNS: tuple[tuple[str, str, str, tuple[ItemState, ...], bool], ...] = (
+    ("Arrived", "arrived", "c-idle",
+     (ItemState.NEW, ItemState.TRIAGED, ItemState.REOPENED), False),
+    ("Waiting on you", "waiting", "c-waiting",
+     (ItemState.WAITING_APPROVAL, ItemState.HUMAN_ONLY), True),
+    ("Queued", "queued", "c-idle", (ItemState.READY,), False),
+    ("Working", "working", "c-working", (ItemState.IN_PROGRESS,), False),
+    ("Waiting on review", "review", "c-waiting", (ItemState.PR_OPEN,), True),
     (
-        "Closed", "c-passed",
+        "Closed", "closed", "c-passed",
         (ItemState.DONE, ItemState.REJECTED, ItemState.FAILED, ItemState.NOT_REPRODUCIBLE),
         False,
     ),
 )
+
+#: The column keys, for the list view to look up without importing the display tuple's shape.
+_IN: dict[str, tuple[ItemState, ...]] = {key: states for _, key, _, states, _ in _COLUMNS}
 
 #: The six steps, in the order a reader watches them happen.
 _PHASES: tuple[tuple[str, AttemptPhase], ...] = (
@@ -424,6 +505,28 @@ def _ago(when: datetime | None) -> str:
     return "not recorded"  # pragma: no cover - the loop above is exhaustive
 
 
+#: The states the dispatcher will ever pick an item up from. `work.py` selects `READY` items whose
+#: project is active; everything else is waiting on a person or already finished.
+_DISPATCHABLE = (ItemState.READY, ItemState.WAITING_APPROVAL)
+
+
+def _stuck(item: _Item) -> str | None:
+    """Why this item can **never** be attempted, or `None` if nothing stops it. Item 166.
+
+    **The count was right and the reader was still misled.** `simplecheck` was disabled on
+    2026-08-07 and item 15 stayed in `ready`, so the board kept counting it under *Queued* with
+    an age that kept climbing — while `work.py` selects on `Project.active.is_(True)` and would
+    never look at it again. A queue that cannot drain has to say so where it is displayed, not in
+    the release notes of the command that disabled the project.
+    """
+    if item.state in _DISPATCHABLE and not item.project.active:
+        return (
+            f"the project '{item.project.slug}' is disabled, so the dispatcher will never "
+            f"pick this up — re-register it to change that"
+        )
+    return None
+
+
 def _board(session: Session) -> str:
     """Where everything is, and how long the oldest has been there.
 
@@ -431,7 +534,7 @@ def _board(session: Session) -> str:
     clock on the transition.
     """
     cells = []
-    for title, tone, states, owed in _COLUMNS:
+    for title, key, tone, states, owed in _COLUMNS:
         items = list(session.scalars(select(_Item).where(_Item.state.in_(states))).all())
         oldest = min((i.state_since for i in items if i.state_since is not None), default=None)
         count = len(items)
@@ -442,10 +545,17 @@ def _board(session: Session) -> str:
             if oldest is not None
             else "age not recorded"
         )
+        # **A count of zero is not a link**, because there is nothing behind it and a link that
+        # lands on "no items match" teaches a reader that the page is broken rather than that the
+        # queue is empty.
+        counter = (
+            f'<span class="count {tone} zero">0</span>'
+            if not count
+            else f'<a href="items?in={key}" class="count {tone}">{count}</a>'
+        )
         cells.append(
             f'<div class="col{" owed" if owed and count else ""}">'
-            f"<h4>{_h(title)}</h4>"
-            f'<span class="count {tone}{" zero" if not count else ""}">{count}</span>'
+            f"<h4>{_h(title)}</h4>{counter}"
             f'<span class="age">{age}</span></div>'
         )
     return f'<div class="board">{"".join(cells)}</div>'
@@ -575,7 +685,9 @@ def _violations_in(seal: object) -> bool:
     return bool(seal.get("violations"))
 
 
-def instance(session: Session, settings: Settings, *, error_reporting: bool) -> str:
+def instance(
+    session: Session, settings: Settings, *, error_reporting: bool, acting: Acting = READING
+) -> str:
     """What `hullwork status` says, for somebody who does not have a terminal on this host.
 
     **Every number comes from the function `status` calls**, never from a second query written for
@@ -639,8 +751,15 @@ def instance(session: Session, settings: Settings, *, error_reporting: bool) -> 
     prices = spend.Prices.from_settings(settings)
     body = (
         "<h1>hullwork</h1>"
-        '<p class="sub">Read-only. Nothing here changes anything. '
-        '<a href="projects">Projects</a> · '
+        # **The opening line stops being a lie when a session can act** (item 166). It said
+        # "Nothing here changes anything" for two versions and it was true; saying it while two
+        # buttons work would be worse than saying nothing.
+        + (
+            '<p class="sub">Read-only. Nothing here changes anything. '
+            if acting.csrf is None
+            else '<p class="sub">Signed in: an amber item can be decided here. '
+        )
+        + '<a href="projects">Projects</a> · '
         '<a href="items">Items and their evidence</a></p>'
         + (f"<h2>Problems</h2><ul>{problems}</ul>" if problems else "")
         # **The three bands come first, and they are the page** (item 143). What follows them is
@@ -649,6 +768,16 @@ def instance(session: Session, settings: Settings, *, error_reporting: bool) -> 
         # is for arrives daily.
         + f"<h2>Now</h2>{_now(session, prices)}"
         + f"<h2>Where everything is</h2>{_board(session)}"
+        # A count is a link now, so the front page needs the way in to be here too rather
+        # than only on an item: the operator arrives at this board, not at item 28.
+        + (
+            '<form method="post" action="login" class="login">'
+            '<input type="password" name="key" autocomplete="current-password" '
+            'placeholder="operator key" aria-label="operator key" required>'
+            '<button type="submit">Sign in to decide</button></form>'
+            if acting.offered and acting.csrf is None
+            else ''
+        )
         + _disagreements(session, settings)
         + f"<h2>State</h2><table>{table}</table>"
         + (f"<h2>Attempts</h2><ul>{attempts}</ul>" if attempts else "")
@@ -657,7 +786,7 @@ def instance(session: Session, settings: Settings, *, error_reporting: bool) -> 
         + _the_credential_split(session)
         + _what_this_instance_allows(settings)
     )
-    return _document("Hullwork — this instance", body)
+    return _document("Hullwork — this instance", body, acting=acting)
 
 
 #: How many rows a list shows. Bounded because an instance that has been running for a year has
@@ -716,7 +845,7 @@ def _project_columns(session: Session, project_id: int) -> str:
     board disagreeing about what "waiting on you" means would make both useless.
     """
     cells = []
-    for title, tone, states, owed in _COLUMNS:
+    for title, _key, tone, states, owed in _COLUMNS:
         count = len(
             list(
                 session.scalars(
@@ -976,22 +1105,27 @@ _NOT_STORED = (
 )
 
 
-def items(session: Session) -> str:
-    """Every item this instance has, most recent first. The view a reviewer lands on."""
+def items(session: Session, *, only: str | None = None, acting: Acting = READING) -> str:
+    """Every item this instance has, most recent first. The view a reviewer lands on.
+
+    `only` is one of the board's column keys, which is what makes a count on the front page lead
+    somewhere. An unrecognised key shows everything rather than nothing: this arrives from a URL,
+    and a typo in a hand-edited address should not read as an empty instance.
+    """
     from sqlalchemy import func
     from sqlalchemy.orm import joinedload
 
     from hullwork.models import Attempt, Item
 
-    total = session.scalar(select(func.count()).select_from(Item)) or 0
-    rows = list(
-        session.scalars(
-            select(Item)
-            .options(joinedload(Item.project))
-            .order_by(Item.last_seen.desc())
-            .limit(MAX_ITEMS)
-        ).all()
-    )
+    states = _IN.get(only) if only else None
+    counting = select(func.count()).select_from(Item)
+    listing = select(Item).options(joinedload(Item.project))
+    if states is not None:
+        counting = counting.where(Item.state.in_(states))
+        listing = listing.where(Item.state.in_(states))
+
+    total = session.scalar(counting) or 0
+    rows = list(session.scalars(listing.order_by(Item.last_seen.desc()).limit(MAX_ITEMS)).all())
     pulls: dict[int, str] = {}
     if rows:
         for item_id, ref in session.execute(
@@ -1009,11 +1143,14 @@ def items(session: Session) -> str:
             if row.id in pulls
             else (_h(row.forge_issue_ref) if row.forge_issue_ref else "—")
         )
+        state = _h(row.state.value) + (
+            ' <span class="stuck">never</span>' if _stuck(row) else ""
+        )
         body_rows.append(
             "<tr>"
             f'<td><a href="items/{row.id}">#{row.id}</a></td>'
             f"<td>{_h(row.project.slug)}</td>"
-            f"<td>{_h(row.state.value)}</td>"
+            f"<td>{state}</td>"
             f"<td>{_h(row.lane.value)}</td>"
             f"<td>{_h(row.title.splitlines()[0] if row.title else '')}</td>"
             f"<td>{_h(row.last_seen)}</td>"
@@ -1021,6 +1158,7 @@ def items(session: Session) -> str:
             "</tr>"
         )
 
+    scope = "" if states is None else f" in <strong>{_h(only)}</strong>"
     if rows:
         table = (
             '<table class="list"><tr><th>item</th><th>project</th><th>state</th><th>lane</th>'
@@ -1031,20 +1169,25 @@ def items(session: Session) -> str:
         # The bound, stated. Silently showing 200 of 4,000 is how a page teaches a reader that an
         # instance has done less than it has.
         shown = (
-            f"Showing all {total} item(s)."
+            f"Showing all {total} item(s)"
             if total <= MAX_ITEMS
-            else f"Showing the {len(rows)} most recently seen of {total} item(s)."
+            else f"Showing the {len(rows)} most recently seen of {total} item(s)"
         )
     else:
         table = ""
-        shown = "No items yet. Nothing has arrived from the error tracker on this instance."
+        shown = (
+            "Nothing here now"
+            if states is not None
+            else "No items yet. Nothing has arrived from the error tracker on this instance"
+        )
 
+    everything = '' if states is None else ' · <a href="items">All items</a>'
     body = (
         "<h1>Items</h1>"
-        f'<p class="sub">{_h(shown)} Most recently seen first. '
-        '<a href="./">Instance</a></p>' + table
+        f'<p class="sub">{shown}{scope}. Most recently seen first. '
+        f'<a href="./">Instance</a>{everything}</p>' + table
     )
-    return _document("Hullwork — items", body)
+    return _document("Hullwork — items", body, acting=acting)
 
 
 def _above_the_fold(attempt: Attempt, prices: Prices | None) -> str:
@@ -1088,7 +1231,85 @@ def _above_the_fold(attempt: Attempt, prices: Prices | None) -> str:
     return '<p class="sub">' + " · ".join(facts) + "</p>"
 
 
-def item(session: Session, settings: Settings, item_id: int) -> str | None:
+#: What each state is waiting for, in the second person, because the reader is the one waiting.
+#:
+#: **Item 166 exists because the page hedged where the state does not.** On an amber item it printed
+#: *"Either this item is waiting for the dispatcher, or its lane says a human takes it"* — and the
+#: state answers that. The operator read the board, saw two items twenty-one hours old, and asked
+#: *"¿y ahora qué?"*; this table is the answer, on the item, in one sentence.
+_WAITING_FOR: dict[ItemState, str] = {
+    ItemState.NEW: "triage, which happens on the next sweep. Nothing to do.",
+    ItemState.TRIAGED: "its lane to be decided, which happens on the next sweep. Nothing to do.",
+    ItemState.WAITING_APPROVAL: (
+        "**you**. Its lane is amber: an agent may attempt it, but only once somebody says so. "
+        "Approving costs one attempt — money on the wire and a pull request for a person to read."
+    ),
+    ItemState.HUMAN_ONLY: (
+        "**a person**, and no agent will touch it. Either its lane says so, or somebody decided so "
+        "here."
+    ),
+    ItemState.READY: "the dispatcher, which takes one item at a time. Nothing to do.",
+    ItemState.IN_PROGRESS: "the attempt running now. The phases are on the front page.",
+    ItemState.PR_OPEN: (
+        "**a reviewer**. Merging it accepts the fix; closing it with a label refuses it, and the "
+        "label is the reason this instance records."
+    ),
+    ItemState.REOPENED: "triage again: it came back after being closed.",
+}
+
+
+def _next_action(found: Item, acting: Acting, *, up: str) -> str:
+    """What is blocking this item and what a person can do about it, right here. Item 166."""
+    stuck = _stuck(found)
+    waiting = _WAITING_FOR.get(found.state)
+    parts: list[str] = []
+    if waiting:
+        parts.append(f"<p><strong>Waiting for</strong> {_own_prose(waiting)}</p>")
+    if stuck:
+        parts.append(f'<p class="sub">But {_h(stuck)}.</p>')
+    if found.state is ItemState.WAITING_APPROVAL and not stuck:
+        parts.append(_decide(found, acting, up=up))
+    if not parts:
+        return ""
+    return f'<div class="next">{"".join(parts)}</div>'
+
+
+def _decide(found: Item, acting: Acting, *, up: str) -> str:
+    """The two buttons, a login, or the command — whichever this request has earned.
+
+    Three states and each one is honest about itself: a signed-in operator gets the buttons; an
+    instance with a key and no session gets a login; an instance with **no operator key** gets the
+    command, because that is the only way to act on it and pretending otherwise would send a reader
+    looking for a login that cannot exist.
+    """
+    if acting.csrf is not None:
+        forms = "".join(
+            f'<form method="post" action="{up}items/{found.id}/{route}">'
+            f'<input type="hidden" name="csrf" value="{_h(acting.csrf)}">'
+            f'<button type="submit"{extra}>{label}</button></form>'
+            for route, label, extra in (
+                ("approve", "Let the agent try it", ' class="go"'),
+                ("human", "I will take this one", ""),
+            )
+        )
+        return f'<div class="decide">{forms}</div>'
+    if acting.offered:
+        return (
+            f'<form method="post" action="{up}login" class="login">'
+            '<input type="password" name="key" autocomplete="current-password" '
+            'placeholder="operator key" aria-label="operator key" required>'
+            '<button type="submit">Sign in to decide</button></form>'
+        )
+    return (
+        '<p class="sub">This instance has no operator key, so nothing here can act. Either run '
+        f"<code>hullwork approve {_h(found.project.slug)} {_h(found.id)}</code> on the host, or "
+        "give the page a key with <code>hullwork operator-key</code>.</p>"
+    )
+
+
+def item(
+    session: Session, settings: Settings, item_id: int, *, acting: Acting = READING
+) -> str | None:
     """One item and every attempt on it. `None` when there is no such item, which the route 404s.
 
     The facts first, because a reviewer decides whether this is worth reading before reading it;
@@ -1160,14 +1381,17 @@ def item(session: Session, settings: Settings, item_id: int) -> str | None:
         f"<h1>#{_h(found.id)} {_h(title)}</h1>"
         f'<p class="sub"><a href="../items">All items</a> · <a href="../">Instance</a></p>'
         f"<table>{table}</table>"
+        + _next_action(found, acting, up="../")
         + (
             f'<p class="sub">{_h(_NOT_STORED)}</p>' + "".join(blocks)
             if blocks
-            else '<p class="sub">No attempts. Either this item is waiting for the dispatcher, or '
-                 "its lane says a human takes it.</p>"
+            # **No longer "either … or".** What it is waiting for is stated above, from the state,
+            # and this line now says only the thing the state cannot: that there is no evidence
+            # trail yet because nothing has run.
+            else '<p class="sub">No attempts yet, so there is no evidence to read here.</p>'
         )
     )
-    return _document(f"Hullwork — item {found.id}", body)
+    return _document(f"Hullwork — item {found.id}", body, acting=acting, up="../")
 
 
 def _issue_link(settings: Settings, found: Item) -> str:
