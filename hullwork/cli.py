@@ -10,6 +10,7 @@ in the operator's own terminal, instead of travelling in a response body.
 """
 
 import argparse
+import getpass
 import json
 import logging
 import os
@@ -1201,44 +1202,54 @@ def _cmd_page_token(
     return 0
 
 
-def _cmd_operator_key(
+def _cmd_password(
     args: argparse.Namespace, session: Session, settings: Settings, out: TextIO
 ) -> int:
-    """Mint the credential that **acts** on the read-only page. Item 166.
+    """Set the password that unlocks the two buttons on the page. Item 168.
 
-    **A second credential rather than a promotion of the first**, and the difference is the whole
-    security model: the page token is a bearer string in a URL — a saved page, a screenshot of the
-    address bar, a link mailed to a colleague — so it reads everything and may never spend money.
-    This one is pasted into a form once and exchanged for a session cookie, so it never lands
-    anywhere a URL lands.
+    **Read from a prompt, not from an argument.** A password on a command line is in shell history,
+    in `ps`, and in whatever collects either. `--stdin` exists for a provisioning script, which has
+    the same problem and has usually already solved it.
 
-    Refuses to replace an existing key without `--rotate`, for the reason `page-token` does: a
-    second person running this to "get in" would lock out the first, and the failure would read as
-    the buttons being broken rather than as a key having changed underneath them.
+    Third design in three items, and the two before were secure and unusable: a stored key to paste,
+    then a one-time link that meant a trip to the host every twelve hours. This is what every
+    self-hosted tool does, for a mechanical reason — a browser's password manager fills it in.
     """
-    existing = operator.configured(session)
-    if existing and not args.rotate:
+    if args.end_sessions:
+        ended = operator.end_every_session(session)
+        print(f"Ended {ended} session(s). The password is unchanged.", file=out)
+        return 0
+
+    if args.stdin:
+        chosen = sys.stdin.readline().rstrip("\n")
+    else:
+        chosen = getpass.getpass("New password: ")
+        if chosen != getpass.getpass("Again: "):
+            raise CommandError("the two did not match; nothing was changed")
+
+    least = 12
+    if len(chosen) < least:
         raise CommandError(
-            "this instance already has an operator key, and it cannot be shown again — it was "
-            "printed once and only its hash is stored.\n"
-            "  To replace it: hullwork operator-key --rotate. Every session open right now ends "
-            "the moment you do."
+            f"that is {len(chosen)} character(s); this wants at least {least}.\n"
+            "  It is the only thing between a stranger who found the page URL and your budget,\n"
+            "  and the browser will remember it for you — so length is nearly free here."
         )
 
-    key = operator.issue_key(session)
-    print("Rotated. Every session that was open has ended." if existing else
-          "The page can now be acted on.", file=out)
-    print("\n  This key is shown once and cannot be recovered:\n", file=out)
-    print(f"    {key}\n", file=out)
+    existing = operator.configured(session)
+    operator.set_password(session, chosen)
+    print("Password changed. Every session that was open has ended." if existing else
+          "Password set. The page can now be signed in to.", file=out)
     print(
-        "  Paste it into the page's login, once per browser. Unlike the page URL it is **not** a\n"
-        "  link and must never become one: it is the difference between somebody reading this\n"
-        "  instance and somebody spending its budget.\n"
+        f"\n  Open the page and sign in once per browser; the session lasts "
+        f"{operator.LIFETIME.days} days and renews while you use it.\n"
         "\n"
-        "  What a session may then do: approve one amber item, or hand one to a human. Nothing\n"
-        "  else on the page changes anything, and there is no approve-everything.\n"
+        "  What a session may do: approve one item waiting for a decision, or hand one to a\n"
+        "  human. Nothing else on the page changes anything, and there is no approve-everything.\n"
         "\n"
-        "  Sessions last 12 hours. To end them all at once, rotate.",
+        "  The page's own URL is unaffected: it still only reads, so it is still safe to hand to\n"
+        "  somebody who should see this instance without being able to spend its budget.\n"
+        "\n"
+        "  To end every session without changing the password: hullwork password --end-sessions",
         file=out,
     )
     return 0
@@ -3069,25 +3080,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     page_token.set_defaults(func=_cmd_page_token)
 
-    operator_key = subparsers.add_parser(
-        "operator-key",
-        help="mint the credential that acts on the read-only page",
+    password = subparsers.add_parser(
+        "password",
+        help="set the password that unlocks the buttons on the page",
         description=(
             "The page reads with a token in its URL, which is why it may not act: a URL is a thing "
-            "that gets saved, screenshotted and forwarded. This mints a second credential that "
-            "never appears in a URL — pasted into a login once per browser, exchanged for a "
-            "session cookie — and it is what the two buttons on an amber item require.\n\n"
-            "Until this command runs there are no buttons, and every route that would change "
+            "that gets saved, screenshotted and forwarded. This sets a second credential that "
+            "never appears in a URL — typed into the page's login once per browser, which is "
+            "where a browser's password manager takes over.\n\n"
+            "Until this runs there is no login and no buttons, and every route that would change "
             "something answers 404 the way an unknown path does.\n\n"
-            "Shown once, stored as a hash."
+            "Read from a prompt: a password on a command line is in shell history and in `ps`."
         ),
     )
-    operator_key.add_argument(
-        "--rotate",
+    password.add_argument(
+        "--stdin",
         action="store_true",
-        help="replace the existing key, ending every session that is open right now",
+        help="read it from standard input instead of prompting, for a provisioning script",
     )
-    operator_key.set_defaults(func=_cmd_operator_key)
+    password.add_argument(
+        "--end-sessions",
+        action="store_true",
+        help="end every open session without changing the password",
+    )
+    password.set_defaults(func=_cmd_password)
 
     pruning = subparsers.add_parser(
         "prune", help="forget the raw bodies of old deliveries, keeping every row"

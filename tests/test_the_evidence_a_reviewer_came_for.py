@@ -488,7 +488,7 @@ def test_the_relative_links_actually_reach_the_other_views(
     door = client.get(f"/page/{token}")
     assert str(door.url).endswith(f"/page/{token}/"), "the slash is what makes the rest relative"
 
-    listed = client.get(urljoin(str(door.url), _href(door.text, "Items and their evidence")))
+    listed = client.get(urljoin(str(door.url), _href(door.text, "Every item and its evidence")))
     assert listed.status_code == 200
     assert "<h1>Items</h1>" in listed.text
 
@@ -545,15 +545,16 @@ def test_the_daily_page_escapes_the_one_third_party_string_it_shows(
     asked for the hostile fixture to cover this page, and the first version of this test asserted
     that a hostile *title* renders escaped — which failed, for the best possible reason.
 
-    Measured 2026-08-05: a project whose slug, repository and item title are all
-    `<script>alert('pwned')</script>` produces a daily page containing **no occurrence of the word
-    `script` at all**, escaped or otherwise. The page shows counts, states and ages — the oldest
-    entry in a column is rendered as *how long*, never as *what*. So the widest surface in the
-    product is narrow where it matters, by construction rather than by escaping.
+    **Item 167 changed the fact this test was written about, and that is worth recording.** Measured
+    2026-08-05, the daily page showed counts, states and ages and never an item title — the oldest
+    entry in a column was rendered as *how long*, never as *what* — so the widest surface in the
+    product was narrow by construction rather than by escaping.
 
-    What it *does* show from outside is a forge's own refusal, through `readiness.problems`, and
-    that is what this exercises. One string, one path, asserted on the real mechanism rather than a
-    synthetic one.
+    It is not any more. The operator asked *"waiting on you 2 — and now what?"*, and the answer was
+    to put the items on the front page **by name**, which puts a third party's exception title there
+    too. The narrowness is gone and only the escaping is left, so this test asserts the escaping and
+    stops counting on the page's own vocabulary: that arithmetic broke the day the stylesheet's
+    comment said the words "no script", which is a false positive about a real property.
     """
     _item(db, project, title=HOSTILE, permalink="javascript:alert(1)")
     readiness.record_forge(f"unreachable:{HOSTILE}")
@@ -563,13 +564,17 @@ def test_the_daily_page_escapes_the_one_third_party_string_it_shows(
         readiness.record_forge("ok")
 
     assert "&lt;script&gt;" in rendered, "the forge's refusal reaches this page, so escape it"
-    assert "<script" not in rendered.lower()
-    assert HOSTILE not in rendered
-    # And the finding above, asserted so it fails if a title ever starts being rendered here
-    # unescaped: the only `script` on the page is the escaped one.
-    assert rendered.lower().count("script") == rendered.count("&lt;script&gt;") * 2, (
-        "a new third-party string arrived on this page; give it its own assertion above"
-    )
+    assert HOSTILE not in rendered, "and the raw string never does"
+
+    # The one assertion that matters and cannot be defeated by prose: no tag that could execute or
+    # fetch, anywhere. `<link>`, `<meta>` and `<style>` are the page's own and are in the head by
+    # construction; everything below can only have arrived from a third party's string.
+    for opening in ("<script", "<iframe", "<object", "<embed", "<svg", "<img", "<form action=http"):
+        assert opening not in rendered.lower(), f"{opening} reached the page from outside"
+
+    # Every escaped opening has its escaped close: a truncation that cut one off would be a tag
+    # reassembled by a browser, and that is the failure this shape catches.
+    assert rendered.count("&lt;script&gt;") == rendered.count("&lt;/script&gt;")
 
 
 def test_every_colour_on_the_daily_page_carries_its_word(db: Session, project: Project) -> None:

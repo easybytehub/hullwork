@@ -170,154 +170,362 @@ def _link(url: str | None, text: str | None = None) -> str:
 #:   monospace so columns align and a truncated hash looks like a hash. Prose and chrome are not,
 #:   because setting an entire interface in a monospace face is a costume, not a decision.
 _STYLE = """
+/* The visual system, inlined. Item 169 rebuilt it after the operator's verdict on item 167's
+   information design: "sigue siendo horriblemente fea". He was right — that pass fixed what the
+   page said and never touched how it looked, so it inherited item 143's austere tokens and read as
+   unstyled HTML with a brown link colour.
+
+   The direction is an instrument panel, and the first decision is that there is no decorative
+   accent: Colour means state here and nothing else: amber is the operator's own queue, blue the
+   machine, green and red the outcomes. A page about whether a robot may touch your code has no
+   business having a brand hue competing with those four.
+
+   The lede was set in the monospace face for one revision, on the theory that the page's headline
+   is the machine's own summary of itself and a machine's voice is monospace. Rendered, it read as
+   terminal output rather than as a headline: mono at display size with negative tracking fights
+   itself, and two wrapped lines of it look like a log. It is sans now, with the weight and tracking
+   a headline needs, and mono keeps the job it is good at — data, ages, identifiers, commands.
+
+   No external asset, no script, one stylesheet, both themes from one set of tokens. */
+
 :root {
   color-scheme: light dark;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
-  --ink:    light-dark(#15171c, #e7e9ee);
-  --muted:  light-dark(#5d6470, #98a0ad);
-  --faint:  light-dark(#868d99, #6f7783);
-  --rule:   light-dark(#e2e5ea, #262a31);
-  --canvas: light-dark(#fcfcfd, #0f1115);
-  --raise:  light-dark(#ffffff, #16191f);
+  /* Neutrals with a cool bias, chosen rather than inherited: a pure grey reads as nobody's
+     decision, and this page is a panel rather than a document. */
+  --ink:    light-dark(#101319, #e9ebf0);
+  --muted:  light-dark(#5a6270, #979fae);
+  --faint:  light-dark(#8b93a1, #666e7d);
+  --rule:   light-dark(#dfe3ea, #232833);
+  --canvas: light-dark(#eef1f5, #070910);
+  --raise:  light-dark(#ffffff, #14171e);
+  --sunk:   light-dark(#f0f2f6, #10131a);
 
-  --waiting: light-dark(#8a5a00, #e3a83a);
-  --working: light-dark(#1b5fb0, #6aa9f2);
-  --passed:  light-dark(#12693a, #4fb37d);
-  --refused: light-dark(#a32f26, #ec7d70);
-  --human:   light-dark(#5a3ea8, #ab8df0);
+  --waiting: light-dark(#9a5b00, #f0b352);
+  --working: light-dark(#1a56c4, #7cb0f7);
+  --passed:  light-dark(#0f6b39, #52bb83);
+  --refused: light-dark(#ab2f22, #f0847a);
+  --human:   light-dark(#5638ad, #b193f5);
 
-  --r-card: 10px;
-  --r-chip: 6px;
+  --r: 8px;
+  --r-chip: 5px;
+  --pad: 1.15rem;
 }
+
 * { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
 body {
-  font: 400 15px/1.6 var(--sans);
-  color: var(--ink); background: var(--canvas);
-  margin: 0 auto; max-width: 78rem; padding: 2.5rem 1.5rem 5rem;
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font: 400 15px/1.55 var(--sans);
+  font-synthesis-weight: none;
   -webkit-font-smoothing: antialiased;
 }
-h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: -.02em; margin: 0 0 .3rem; }
-h2 { font-size: .78rem; font-weight: 650; letter-spacing: .07em; text-transform: uppercase;
-     color: var(--faint); margin: 2.5rem 0 .75rem; }
-h3 { font-size: 1rem; font-weight: 600; letter-spacing: -.01em; margin: 0 0 .4rem; }
-a { color: inherit; text-underline-offset: 3px; text-decoration-color: var(--rule); }
+
+.wrap { max-width: 62rem; margin: 0 auto; padding: 0 1.5rem 4rem; }
+
+a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px;
+    text-decoration-color: color-mix(in oklab, currentColor 35%, transparent); }
 a:hover { text-decoration-color: currentColor; }
-.sub { color: var(--muted); margin: 0 0 2rem; }
-.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.faint { color: var(--faint); }
-.bad { font-weight: 650; color: var(--refused); }
+:focus-visible { outline: 2px solid var(--working); outline-offset: 2px; border-radius: 3px; }
 
-/* A band is the unit of the daily page: hairline, soft radius, and in light mode the faintest
-   lift so it reads as a surface rather than as a box drawn on the page. */
-.band { background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r-card);
-        padding: 1.1rem 1.25rem; margin: 0 0 1rem;
-        box-shadow: light-dark(0 1px 2px rgb(16 18 28 / .04), none); }
-.band.quiet { background: none; box-shadow: none; }
+/* --- the top edge, which the page did not have ----------------------------------------------- */
 
-/* State chips. The tint is derived from the semantic colour so a new state needs one variable,
-   and the word inside is never optional. */
-.chip { display: inline-flex; align-items: center; gap: .4rem; font: 600 .75rem/1 var(--sans);
-        letter-spacing: .01em; padding: .35rem .55rem; border-radius: var(--r-chip);
-        border: 1px solid color-mix(in oklab, var(--c, var(--muted)) 30%, transparent);
-        background: color-mix(in oklab, var(--c, var(--muted)) 12%, transparent);
-        color: var(--c, var(--muted)); white-space: nowrap; }
-.chip::before { content: ""; width: .4rem; height: .4rem; border-radius: 50%;
-                background: currentColor; flex: none; }
-.c-waiting { --c: var(--waiting); } .c-working { --c: var(--working); }
-.c-passed  { --c: var(--passed);  } .c-refused { --c: var(--refused); }
-.c-human   { --c: var(--human);   } .c-idle    { --c: var(--faint);   }
+.bar {
+  display: flex; align-items: center; gap: .7rem;
+  padding: 1rem 0 .9rem; margin-bottom: 1.6rem;
+  border-bottom: 1px solid var(--rule);
+}
+.mark { font: 600 1.1rem/1 var(--mono); color: var(--ink); }
+.word { font: 600 .95rem/1 var(--sans); letter-spacing: .01em; }
+.bar .spacer { flex: 1; }
+.pill {
+  font: 550 .68rem/1 var(--sans); letter-spacing: .07em; text-transform: uppercase;
+  padding: .32rem .5rem; border-radius: var(--r-chip);
+  border: 1px solid color-mix(in oklab, var(--c, var(--faint)) 40%, transparent);
+  background: color-mix(in oklab, var(--c, var(--faint)) 9%, transparent);
+  color: var(--c, var(--muted));
+}
+.pill.ok   { --c: var(--passed); }
+.pill.bad  { --c: var(--refused); }
+.pill.mine { --c: var(--waiting); }
 
-/* The board: one column per group, wrapping down on a narrow screen rather than scrolling out. */
-.board { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
-.col { background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r-card);
-       padding: .85rem .9rem; min-height: 6.5rem; }
-.col h4 { font: 650 .72rem/1 var(--sans); letter-spacing: .06em; text-transform: uppercase;
-          color: var(--faint); margin: 0 0 .6rem; }
-.count { font: 650 1.75rem/1 var(--mono); font-variant-numeric: tabular-nums;
-         letter-spacing: -.03em; color: var(--c, var(--ink)); }
-.count.zero { color: var(--faint); font-weight: 400; }
-/* Item 166: a non-zero count is a link to the items it counted. It keeps the number's weight and
-   colour — the underline is what says it can be clicked, and only on hover so the board still reads
-   as figures rather than as a menu. */
-a.count { display: inline-block; text-decoration: none; }
-a.count:hover, a.count:focus-visible { text-decoration: underline; }
-/* A tinted number is still a number: the column heading above it carries the meaning. */
-.age { display: block; font-size: .78rem; color: var(--muted); margin-top: .35rem; }
-.col.owed { border-color: color-mix(in oklab, var(--waiting) 45%, var(--rule)); }
+/* The gate, as one line. A test that failed against unmodified code passes with the change applied:
+   that sentence is the whole claim this product makes, and it is the only decoration on the page.
+   Two pixels, under the header, and nowhere else — a motif that repeats is wallpaper. */
+.bar { position: relative; border-bottom: 0; padding-bottom: 1rem; }
+.bar::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  /* A hard-ish transition rather than a long fade: the gate is a change of state, not a gradient,
+     and a 1500px-wide blend reads as no colour at all. */
+  background: linear-gradient(90deg,
+    var(--refused) 0%, var(--refused) 26%,
+    color-mix(in oklab, var(--refused) 40%, var(--passed)) 44%,
+    var(--passed) 62%, var(--passed) 100%);
+  border-radius: 3px;
+}
 
-/* The six phases of the attempt in flight. */
-.phases { display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0 0;
-          padding: 0; list-style: none; }
-.phase { font: 500 .78rem/1 var(--mono); padding: .4rem .6rem; border-radius: var(--r-chip);
+/* --- what this instance has proved, which is what a stranger came for ------------------------ */
+
+.proof {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r);
+  margin: 0 0 1.4rem; overflow: hidden;
+}
+.cell { padding: 1rem var(--pad) .95rem; border-right: 1px solid var(--rule);
+        display: flex; flex-direction: column; gap: .15rem; }
+.cell:last-child { border-right: 0; }
+.big {
+  /* Sans, and this is the one place mono loses. Menlo and its neighbours draw a slashed zero, which
+     is right in a terminal and reads as Ø at 2.4rem — a different glyph in the middle of a figure,
+     and `font-feature-settings: "zero" 0` does not turn it off because for that face it is not a
+     feature, it is the glyph. Tabular numerals keep the columns aligned, which was the reason for
+     mono here in the first place. */
+  font: 600 2.5rem/1 var(--sans); font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -.035em; color: var(--ink);
+}
+/* Green only when there is something to be green about: a green `0` under HELD says "good" where it
+   means "none has cleared the window yet", which is the kind of figure that flatters itself. */
+.cell.won  .big { color: var(--passed); }
+.cell.won.none .big, .cell.lost.none .big { color: var(--ink); }
+.cell.lost .big { color: var(--refused); }
+.name { font: 550 .7rem/1 var(--sans); letter-spacing: .08em; text-transform: uppercase;
+        color: var(--muted); margin-top: .35rem; }
+.gloss { font: 400 .72rem/1.35 var(--sans); color: var(--faint); }
+
+/* --- the answer ------------------------------------------------------------------------------ */
+
+.answer {
+  background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r);
+  border-left: 3px solid var(--c, var(--faint));
+  padding: var(--pad) calc(var(--pad) + .2rem);
+  margin: 0 0 1.5rem;
+}
+.answer.mine { --c: var(--waiting); }
+.answer.bad  { --c: var(--refused); }
+.answer.calm { --c: var(--passed); }
+/* The sentence is set in ink and the stripe on the panel carries the state. Colouring 1.7rem of
+   text amber is what made this look dated, and it was redundant: the reader already knows whose
+   queue it is from the stripe, and colour is worth more where it is scarce. A problem is the one
+   exception, below, because red there is the message and not a label. */
+.lede {
+  font: 450 1.7rem/1.28 var(--sans);
+  letter-spacing: -.022em; margin: 0; text-wrap: pretty; max-width: 44ch;
+  color: var(--ink);
+}
+.lede.bad { color: var(--refused); }
+.lede .also { font: 400 .55em/1 var(--sans); color: var(--muted); letter-spacing: 0; }
+.answer .sub { margin: .7rem 0 0; }
+
+/* --- the decisions --------------------------------------------------------------------------- */
+
+/* One card with divided rows, not one card per row: six equally-bordered boxes on a screen is the
+   same failure as six equally-weighted columns, in a different shape. */
+.decisions {
+  list-style: none; padding: 0; margin: 0 0 1.4rem;
+  background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r);
+  border-left: 3px solid var(--waiting); overflow: hidden;
+}
+.decision { padding: .85rem var(--pad); border-top: 1px solid var(--rule); }
+.decision:first-child { border-top: 0; }
+.decision .what { display: block; font-weight: 550; font-size: .97rem; }
+.decision .meta { display: block; font: 400 .78rem/1.5 var(--mono); color: var(--muted);
+                  margin-top: .3rem; }
+.decision .decide { margin-top: .7rem; }
+.decision .sub { margin: .5rem 0 0; }
+/* The "how to sign in" line belongs to the card above it, not to the gap below. */
+.decisions + .how { margin: -1.1rem 0 1.4rem; padding: 0 var(--pad);
+                    font-size: .82rem; color: var(--muted); }
+
+/* --- what it is doing ------------------------------------------------------------------------ */
+
+.band {
+  background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r);
+  padding: var(--pad); margin: 0 0 1.1rem;
+}
+.band.quiet { background: var(--sunk); }
+.band > :first-child { margin-top: 0; }
+.band > :last-child { margin-bottom: 0; }
+
+.phases { display: flex; flex-wrap: wrap; gap: .35rem; margin: .8rem 0 0; padding: 0;
+          list-style: none; }
+.phase { font: 500 .72rem/1 var(--mono); letter-spacing: .02em;
+         padding: .38rem .5rem; border-radius: var(--r-chip);
          border: 1px solid var(--rule); color: var(--faint); }
 .phase.done { color: var(--passed);
               border-color: color-mix(in oklab, var(--passed) 35%, transparent);
-              background: color-mix(in oklab, var(--passed) 10%, transparent); }
+              background: color-mix(in oklab, var(--passed) 9%, transparent); }
 .phase.live { color: var(--working);
               border-color: color-mix(in oklab, var(--working) 45%, transparent);
-              background: color-mix(in oklab, var(--working) 12%, transparent); }
-.phase.failed { color: var(--refused);
-                border-color: color-mix(in oklab, var(--refused) 40%, transparent);
-                background: color-mix(in oklab, var(--refused) 12%, transparent); }
+              background: color-mix(in oklab, var(--working) 11%, transparent); }
 
-/* Facts: label and value, aligned, no table needed. */
-.facts { display: grid; grid-template-columns: minmax(9rem, max-content) 1fr; gap: .3rem 1.25rem;
-         margin: .25rem 0 0; }
-.facts dt { color: var(--muted); font-size: .85rem; }
-.facts dd { margin: 0; font-family: var(--mono); font-size: .85rem;
-            font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.chip { display: inline-flex; align-items: center; gap: .35rem;
+        font: 550 .72rem/1 var(--sans); letter-spacing: .02em;
+        padding: .34rem .5rem; border-radius: var(--r-chip);
+        border: 1px solid color-mix(in oklab, var(--c, var(--faint)) 35%, transparent);
+        background: color-mix(in oklab, var(--c, var(--faint)) 9%, transparent);
+        color: var(--c, var(--muted)); }
+.chip::before { content: "●"; font-size: .6em; }
+.c-working { --c: var(--working); } .c-waiting { --c: var(--waiting); }
+.c-passed  { --c: var(--passed);  } .c-refused { --c: var(--refused); }
+.c-idle    { --c: var(--faint);   } .c-human   { --c: var(--human);   }
 
-table { border-collapse: collapse; width: 100%; margin: .5rem 0 1rem; }
-th, td { text-align: left; padding: .45rem .7rem .45rem 0; vertical-align: top; }
-th { font-weight: 600; color: var(--muted); width: 16rem; font-size: .85rem; }
-ul { margin: .25rem 0 1rem; padding-left: 1.2rem; }
-li { margin: .2rem 0; }
-footer { margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule);
-         color: var(--faint); font-size: .82rem; }
-/* The list has seven narrow columns, not two wide ones, so it undoes the label width above. */
-table.list th { width: auto; font-size: .75rem; letter-spacing: .05em; text-transform: uppercase;
-                color: var(--faint); }
-table.list td { border-top: 1px solid var(--rule); font-size: .875rem; }
-table.list tr:hover td { background: color-mix(in oklab, var(--ink) 4%, transparent); }
-/* Captured output is somebody else's, and some of it has 300-character lines. It wraps rather
-   than scrolls, because a horizontal scrollbar inside a collapsed block hides evidence. */
-pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .5rem 0;
-      font: .82rem/1.5 var(--mono); background: color-mix(in oklab, var(--ink) 4%, transparent);
-      border-radius: var(--r-chip); padding: .7rem .85rem; }
-details { margin: .4rem 0 .7rem; }
-summary { cursor: pointer; color: var(--muted); font-size: .875rem; }
-summary:hover { color: var(--ink); }
-details > pre { border-left: 2px solid var(--rule); }
-code { font-family: var(--mono); font-size: .9em; }
+/* --- the machine, as one row ----------------------------------------------------------------- */
 
-/* Item 166. A form is the only way to change something here, so it has to look like part of the
-   page rather than like a browser default from 1998. `.linkish` is a button that reads as a link,
-   for sign-out, where a button would claim more weight than the action has. */
+/* The live queue, and it must not look like the record above it. Same figures, different job:
+   that one is what this instance has proved, this one is what is in flight right now. Sunk, no
+   border, smaller — a caption to the page rather than a headline. */
+.strip {
+  display: flex; flex-wrap: wrap; gap: 0 1.6rem;
+  padding: .7rem var(--pad); margin: 0 0 1.2rem;
+  background: var(--sunk); border-radius: var(--r);
+}
+.tally { display: flex; align-items: baseline; gap: .4rem; }
+.fig { font: 550 1.05rem/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink);
+       font-feature-settings: "zero" 0; text-decoration: none; }
+a.fig { text-decoration-color: color-mix(in oklab, currentColor 35%, transparent); }
+a.fig:hover { text-decoration: underline; }
+.fig.zero { color: var(--faint); font-weight: 400; }
+.cap { font: 400 .74rem/1 var(--sans); color: var(--muted); letter-spacing: .01em; }
+
+/* --- the item's own views, which the first pass of item 169 left behind ---------------------- */
+
+/* An audit of emitted classes against defined selectors found four orphans after the stylesheet was
+   rewritten: this one, .board, .age and .faint. The markup kept emitting them and nothing styled
+   them, so the item view and the project view rendered as bare tables while the front page had been
+   redressed. Measured by comparing the two sets rather than by clicking around. */
+.next {
+  background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r);
+  border-left: 3px solid var(--waiting);
+  padding: var(--pad); margin: 1.2rem 0;
+}
+.next > :first-child { margin-top: 0; }
+.next > :last-child { margin-bottom: 0; }
+.next .decide { margin-top: .8rem; }
+
+/* The project view's own copy of the board, which shares `_COLUMNS` with the instance strip so the
+   two can never disagree about what a column means. */
+.board { display: flex; flex-wrap: wrap; gap: .6rem; margin: 0 0 1.2rem; }
+.col { flex: 1 1 8rem; background: var(--raise); border: 1px solid var(--rule);
+       border-radius: var(--r); padding: .8rem var(--pad); }
+.col.owed { border-left: 3px solid var(--waiting); }
+.age { display: block; font: 400 .74rem/1 var(--sans); color: var(--muted); margin-top: .4rem; }
+.faint { color: var(--faint); }
+
+/* --- the line that says the checks ran ------------------------------------------------------- */
+
+.settled { display: flex; align-items: baseline; gap: .45rem;
+           font-size: .82rem; color: var(--muted); margin: 0 0 1.4rem; }
+.settled::before { content: "✓"; color: var(--passed); font-weight: 600; }
+
+/* --- everything the evaluator wants, as one block rather than five rules --------------------- */
+
+.more { border: 1px solid var(--rule); border-radius: var(--r); background: var(--raise);
+        margin: 1.6rem 0 0; overflow: hidden; }
+.more > details { border: 0; border-top: 1px solid var(--rule); }
+.more > details:first-child { border-top: 0; }
+details > summary {
+  cursor: pointer; padding: .8rem var(--pad); list-style: none;
+  font: 500 .86rem/1.4 var(--sans); color: var(--muted);
+  display: flex; align-items: center; gap: .55rem;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before { content: "+"; font: 400 .9rem/1 var(--mono); color: var(--faint);
+                            width: .7rem; text-align: center; }
+/* The typographic minus, which pairs the + above rather than a hyphen. */
+details[open] > summary::before { content: "\2212 "; }
+details > summary:hover { color: var(--ink); background: var(--sunk); }
+.folded { padding: 0 var(--pad) 1.1rem; }
+.folded > :first-child { margin-top: 0; }
+
+/* --- type --------------------------------------------------------------------------------- */
+
+h1 { font: 600 1.35rem/1.25 var(--sans); letter-spacing: -.015em; margin: 0 0 .3rem;
+     text-wrap: balance; }
+h2 { font: 600 .78rem/1 var(--sans); letter-spacing: .07em; text-transform: uppercase;
+     color: var(--faint); margin: 1.8rem 0 .7rem; }
+h4 { font: 550 .72rem/1 var(--sans); letter-spacing: .06em; text-transform: uppercase;
+     color: var(--faint); margin: 0 0 .5rem; }
+p { margin: .7rem 0; }
+.sub { font-size: .84rem; color: var(--muted); }
+.sub a { color: var(--ink); }
+.bad { color: var(--refused); }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+code { font: 400 .87em/1.4 var(--mono); background: var(--sunk); padding: .12em .32em;
+       border-radius: 4px; }
+ul, ol { margin: .7rem 0; padding-left: 1.2rem; }
+li { margin: .25rem 0; }
+time { font-variant-numeric: tabular-nums; }
+
+/* --- tables, which are data and should look like it ----------------------------------------- */
+
+table { border-collapse: collapse; width: 100%; font-size: .87rem; }
+th { text-align: left; font-weight: 500; color: var(--muted); vertical-align: top;
+     padding: .4rem 1rem .4rem 0; white-space: nowrap; }
+td { padding: .4rem 0; vertical-align: top; }
+table.list { font-size: .84rem; }
+table.list th { border-bottom: 1px solid var(--rule); padding-bottom: .5rem;
+                font: 550 .7rem/1 var(--sans); letter-spacing: .05em; text-transform: uppercase; }
+table.list td { border-bottom: 1px solid var(--rule); padding: .5rem .8rem .5rem 0; }
+table.list tr:hover td { background: var(--sunk); }
+.wide { overflow-x: auto; }
+
+.facts { display: grid; grid-template-columns: auto 1fr; gap: .35rem 1rem; margin: 0; }
+.facts dt { color: var(--muted); font-size: .84rem; }
+.facts dd { margin: 0; font-family: var(--mono); font-size: .84rem; }
+
+/* --- the forms that decide ------------------------------------------------------------------- */
+
 form.inline { display: inline; }
-button.linkish {
-  background: none; border: 0; padding: 0; font: inherit; color: inherit;
-  text-decoration: underline; cursor: pointer;
-}
-.decide { display: flex; gap: .6rem; flex-wrap: wrap; margin: .8rem 0 0; }
-.decide button {
-  font: inherit; padding: .45rem .9rem; border-radius: 6px; cursor: pointer;
-  border: 1px solid var(--rule); background: var(--card); color: var(--fg);
-}
-.decide button.go { border-color: var(--passed); }
+button.linkish { background: none; border: 0; padding: 0; font: inherit; color: inherit;
+                 text-decoration: underline; cursor: pointer; }
+.decide { display: flex; gap: .5rem; flex-wrap: wrap; }
 .decide form { margin: 0; }
-.login { margin: .8rem 0 0; display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
-.login input {
-  font: inherit; font-family: var(--mono); padding: .4rem .5rem; min-width: 22rem;
-  border: 1px solid var(--rule); border-radius: 6px; background: var(--card); color: var(--fg);
+.decide button, .login button {
+  font: 550 .84rem/1 var(--sans); padding: .5rem .85rem; border-radius: var(--r-chip);
+  cursor: pointer; border: 1px solid var(--rule); background: var(--raise); color: var(--ink);
 }
-.next { border-left: 3px solid var(--waiting); padding-left: .8rem; margin: 1rem 0; }
-/* An item the dispatcher will never pick up. Beside the state rather than instead of it: the state
-   is still the truth, this is what the state cannot say on its own. */
-.stuck { font: 600 .7rem/1 var(--sans); letter-spacing: .04em; text-transform: uppercase;
+.decide button:hover, .login button:hover { background: var(--sunk); }
+.decide button.go { border-color: color-mix(in oklab, var(--passed) 45%, transparent);
+                    color: var(--passed); }
+.decide button.go:hover { background: color-mix(in oklab, var(--passed) 9%, transparent); }
+.login { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: 0; }
+.login input {
+  font: 400 .88rem/1 var(--mono); padding: .5rem .6rem; min-width: 18rem; flex: 1 1 18rem;
+  border: 1px solid var(--rule); border-radius: var(--r-chip);
+  background: var(--canvas); color: var(--ink);
+}
+.stuck { font: 600 .64rem/1 var(--sans); letter-spacing: .05em; text-transform: uppercase;
          color: var(--refused); border: 1px solid currentColor; border-radius: var(--r-chip);
-         padding: .15rem .35rem; margin-left: .35rem; }
+         padding: .16rem .34rem; margin-left: .35rem; }
+
+/* --- the evidence, which is somebody else's output and must not be styled into prose --------- */
+
+details.evidence > summary { font-family: var(--mono); }
+pre { background: var(--sunk); border: 1px solid var(--rule); border-radius: var(--r);
+      padding: .9rem 1rem; overflow-x: auto; font: 400 .8rem/1.5 var(--mono); margin: .8rem 0; }
+details > pre { border-left-width: 3px; }
+
+footer {
+  margin: 2.5rem 0 0; padding-top: 1.1rem; border-top: 1px solid var(--rule);
+  font-size: .78rem; color: var(--faint);
+}
+footer strong { color: var(--muted); font-weight: 550; }
+
+@media (prefers-reduced-motion: no-preference) {
+  a, button, summary { transition: color 120ms ease, background 120ms ease; }
+}
+
+@media (max-width: 40rem) {
+  .wrap { padding: 0 1rem 3rem; }
+  .lede { font-size: 1.3rem; }
+  .tally { flex: 1 1 45%; border-right: 0; border-bottom: 1px solid var(--rule); }
+}
 """
 
 
@@ -351,10 +559,16 @@ class Acting:
     #: answer for a wrong cookie, an expired session and an instance with no key alike.
     csrf: str | None = None
 
-    #: Whether an operator key exists, which is whether offering a login is honest. Without this the
-    #: page would either show a login on an instance that can never accept one, or hide the one
-    #: affordance the operator is looking for.
+    #: Whether a password has been set, which is whether a login is worth offering. Item 167 had no
+    #: use for this — a one-time link needs nothing stored — and item 168 needs it again: a login
+    #: form on an instance that cannot accept one is a dead end, and telling a reader to run
+    #: `hullwork password` is the honest alternative.
     offered: bool = False
+
+    #: Minutes left on a lockout, when there is one. **Reported rather than hidden**, unlike a wrong
+    #: password: an operator who has typed it wrong ten times needs to know the door is shut and for
+    #: how long, and somebody guessing already knows they have been guessing.
+    locked_minutes: int | None = None
 
 
 #: A request that may read and nothing else — the default everywhere, and the whole of what this
@@ -362,7 +576,14 @@ class Acting:
 READING = Acting()
 
 
-def _document(title: str, body: str, *, acting: Acting = READING, up: str = "") -> str:
+def _document(
+    title: str,
+    body: str,
+    *,
+    acting: Acting = READING,
+    up: str = "",
+    state: tuple[str, str] | None = None,
+) -> str:
     """The whole page. No script, no external asset, one inlined stylesheet.
 
     `up` is how far this view is from `/page/<token>/`, because **every URL here is relative on
@@ -374,8 +595,9 @@ def _document(title: str, body: str, *, acting: Acting = READING, up: str = "") 
         "read-only. <strong>This URL is the credential</strong>: anyone who has it can read "
         "everything on this page. Rotate it with <code>hullwork page-token --rotate</code>."
         if acting.csrf is None
-        else "<strong>signed in</strong>, so two buttons on an amber item work and nothing else "
-        "does. The URL is still only a read credential: this browser holds the other one. "
+        else "<strong>signed in</strong> for twelve hours, so two buttons on an amber item work "
+        "and nothing else does. The URL is still only a read credential: the session is what "
+        "acts, and it lives in this browser. "
         f'<form method="post" action="{up}logout" class="inline">'
         f'<input type="hidden" name="csrf" value="{_h(acting.csrf)}">'
         '<button type="submit" class="linkish">Sign out</button></form>'
@@ -387,9 +609,36 @@ def _document(title: str, body: str, *, acting: Acting = READING, up: str = "") 
         '<meta name="referrer" content="no-referrer">'
         f'<link rel="icon" href="{_FAVICON}">'
         f"<title>{_h(title)}</title><style>{_STYLE}</style></head><body>\n"
+        '<div class="wrap">\n'
+        f"{_bar(up=up, state=state)}\n"
         f"{body}\n"
         f"<footer>Hullwork {_h(__version__)} — {footing}</footer>\n"
+        "</div>\n"
         "</body></html>\n"
+    )
+
+
+def _bar(*, up: str, state: tuple[str, str] | None) -> str:
+    """The top edge, which the page did not have. Item 169.
+
+    **A page that opens with a sentence and no header reads as an email**, which is what the
+    operator was looking at when he called the redesign ugly: item 167 removed the
+    `<h1>hullwork</h1>` and put nothing in its place, so there was no anchor, no mark, and nothing
+    saying which instance this is.
+
+    The mark is the one the interface document specifies — `▚`, no binary asset — and the pill on
+    the right is the instance's own state, which is the second thing a reader wants after *does this
+    need me* and was previously buried in a folded table.
+    """
+    badge = (
+        f'<span class="pill {_h(state[1])}">{_h(state[0])}</span>' if state is not None else ""
+    )
+    return (
+        '<header class="bar">'
+        f'<a class="mark" href="{up}./" aria-label="This instance">▚</a>'
+        f'<span class="word">hullwork</span>'
+        '<span class="spacer"></span>'
+        f"{badge}</header>"
     )
 
 
@@ -527,6 +776,102 @@ def _stuck(item: _Item) -> str | None:
     return None
 
 
+def _proof(session: Session, *, merged: int, holding: int, recurred: int, watch: int) -> str:
+    """The instrument's own record, in figures, as the striking thing on the page. Item 170.
+
+    **The page is a proof rather than a panel, and this is the proof.** Two readers arrive here and
+    until now only one was served: the operator, daily, asking what needs them. The other is a
+    stranger who has installed nothing and is deciding whether this is real — and for an open-source
+    product that reader is the whole distribution channel. What convinces them is not a feature
+    list, it is *this instance's* count of fixes that were merged and then did not come back.
+
+    Same content, both readers. The operator reads it as state; the stranger reads it as evidence.
+
+    The figures are set in mono at display size because they are **measurements**, and an instrument
+    should shout its measurements rather than its name. The order is the product's own sequence —
+    found, tried, merged, held — so the row is a funnel read left to right, and the red-to-green
+    seam under it is the gate every one of those merges had to pass.
+    """
+    from sqlalchemy import func
+
+    items = session.scalar(select(func.count()).select_from(_Item)) or 0
+    tried = session.scalar(
+        select(func.count(func.distinct(_Attempt.item_id))).where(_Attempt.rehearsal.is_(False))
+    ) or 0
+    # Four words at most. The figure is the message; the gloss is there so a stranger does not have
+    # to guess what was counted, and a sentence under each one turns the row back into prose.
+    cells = (
+        ("found", items, "errors seen", ""),
+        ("tried", tried, "agent let loose", ""),
+        ("merged", merged, "a human accepted", "won"),
+        ("held", holding, f"{watch} days, no recurrence", "won"),
+        ("came back", recurred, "merged, then recurred", "lost" if recurred else ""),
+    )
+    figures = "".join(
+        f'<div class="cell {tone}{" none" if not count else ""}">'
+        f'<span class="big">{count}</span>'
+        f'<span class="name">{_h(name)}</span>'
+        f'<span class="gloss">{_h(gloss)}</span></div>'
+        for name, count, gloss, tone in cells
+    )
+    return f'<section class="proof">{figures}</section>'
+
+
+def _fold(summary: str, body: str) -> str:
+    """A closed disclosure, native, no JavaScript. Item 167.
+
+    **Everything below the first screen is the evaluator's**, and the interface document
+    already said so: *"the daily reader must never pay for the evaluator's questions."*
+    It was not true — the
+    configuration table started in the second half of the first screen. `<details>` is how a page
+    with no script keeps a promise like that: closed, one line, and the summary says what is inside
+    so it is not a mystery box.
+    """
+    return f"<details><summary>{_h(summary)}</summary><div class=\"folded\">{body}</div></details>"
+
+
+def entered(*, signed_in: bool) -> str:
+    """What a sign-in link renders. Item 167.
+
+    **The same page either way, minus the good news.** A spent link, a forged one and an expired one
+    all land here, and this route is reachable by anybody, so it must not report on whether a token
+    was ever real.
+    """
+    line = (
+        "<p class=\"lede calm\">This browser can decide now.</p>"
+        "<p>Go back to your Hullwork page and reload it. The two buttons are on any item waiting "
+        "for a decision, and nothing else on the page changes anything.</p>"
+        "<p class=\"sub\">The session lasts twelve hours. To end it everywhere at once, run "
+        "<code>hullwork sign-in --end-all</code>.</p>"
+        if signed_in
+        else "<p class=\"lede\">This link cannot be used.</p>"
+        "<p>A sign-in link works <strong>once</strong>, and stops working ten minutes after it is "
+        "printed. If this one was already opened, the browser that opened it is the one that is "
+        "signed in.</p>"
+        "<p class=\"sub\">Run <code>hullwork sign-in</code> on the host for another.</p>"
+    )
+    return _document("Hullwork — sign in", f"<h1>Sign in</h1>{line}")
+
+
+def _when(when: datetime | None) -> str:
+    """A timestamp a person reads, with the exact one in `title` for anybody who needs it.
+
+    **Item 167, and what it replaces was on the evidence page for two milestones**: `seen` printed
+    `6 time(s), first 2026-08-05 09:57:43.866473+00:00, last 2026-08-05 10:27:43.866473+00:00` — two
+    thirty-two-character strings, with microseconds, at the same weight as the lane and its reason.
+    Nobody parses that, so nobody read the line it was in.
+
+    The full value is not thrown away: it is the tooltip, because the one reader who wants
+    microseconds is comparing this page against a log and should not have to leave.
+    """
+    if when is None:
+        return "not recorded"
+    return (
+        f'<time datetime="{_h(when.isoformat())}" title="{_h(when.isoformat())}">'
+        f"{_h(when.strftime('%-d %b %H:%M'))}</time>"
+    )
+
+
 def _board(session: Session) -> str:
     """Where everything is, and how long the oldest has been there.
 
@@ -559,6 +904,123 @@ def _board(session: Session) -> str:
             f'<span class="age">{age}</span></div>'
         )
     return f'<div class="board">{"".join(cells)}</div>'
+
+
+
+#: How many items waiting on the operator the front page lists before it stops and links instead.
+#: Five is a screenful of decisions. Past that the answer is not "here they all are" but "you have
+#: a backlog", and a backlog is worked in the list view.
+DECISIONS_SHOWN = 5
+
+
+def _lede(session: Session, report: object, *, waiting: list[_Item]) -> str:
+    """One sentence, in the largest type on the page, answering *does this need me*. Item 167.
+
+    **A number in a box is a tally; a sentence is an answer.** The board this replaces put the
+    operator's own queue in the second of six identical cards, told apart by a faint border tint —
+    so finding it meant reading six labels, which is what *"extremadamente liosa"* was describing.
+
+    Severity decides what the sentence is about, and only one thing can be first: a problem outranks
+    a decision, a decision outranks the machine, and *nothing needs you* is a real answer that
+    deserves saying rather than being left to be inferred from six zeroes.
+    """
+    problems = list(getattr(report, "problems", []))
+    if problems:
+        rest = len(problems) - 1
+        also = f' <span class="also">and {rest} more</span>' if rest else ""
+        return _answer("bad", f"{_h(problems[0])}{also}")
+    if waiting:
+        oldest = min((i.state_since for i in waiting if i.state_since is not None), default=None)
+        how_long = f" The oldest has waited {_h(_ago(oldest))}." if oldest is not None else ""
+        count = len(waiting)
+        thing = "item needs" if count == 1 else "items need"
+        return _answer("mine", f"{count} {thing} a decision from you.{how_long}")
+    reviewing = len(
+        list(session.scalars(select(_Item).where(_Item.state == ItemState.PR_OPEN)).all())
+    )
+    if reviewing:
+        pulls = "pull request is" if reviewing == 1 else "pull requests are"
+        return _answer("", f"{reviewing} {pulls} waiting for a reviewer.")
+    return _answer("calm", "Nothing needs you.")
+
+
+def _answer(tone: str, sentence: str) -> str:
+    """The lede, in a panel with a state stripe rather than floating above a hairline. Item 169."""
+    return (
+        f'<section class="answer {tone}"><p class="lede {tone}">{sentence}</p></section>'
+    )
+
+
+def _deciding(waiting: list[_Item], acting: Acting) -> str:
+    """The items waiting on the operator, named, with their buttons. Item 167.
+
+    **This is the fix item 166 got half right.** That item made the count a link, so *"waiting on
+    you 2 — and now what?"* became one click instead of a dead end. But three items cost three
+    lines, which is less space than the card that counts them: the front page should show the work
+    rather than the tally, and then the click is not needed at all.
+    """
+    if not waiting:
+        return ""
+    rows = []
+    for found in waiting[:DECISIONS_SHOWN]:
+        title = found.title.splitlines()[0] if found.title else f"item {found.id}"
+        stuck = _stuck(found)
+        rows.append(
+            '<li class="decision">'
+            f'<a class="what" href="items/{found.id}">{_h(title)}</a>'
+            f'<span class="meta">{_h(found.project.slug)} · waiting {_h(_ago(found.state_since))}'
+            + (' · <span class="stuck">never runs</span>' if stuck else "")
+            + "</span>"
+            + ("" if stuck else _decide(found, acting, up=""))
+            + "</li>"
+        )
+    how = _how_to_decide(acting)
+    hidden = len(waiting) - DECISIONS_SHOWN
+    more = (
+        f'<p class="sub"><a href="items?in=waiting">and {hidden} more</a></p>'
+        if hidden > 0
+        else ""
+    )
+    return f'<ul class="decisions">{"".join(rows)}</ul>{more}{how}'
+
+
+def _strip(session: Session) -> str:
+    """Where everything else is, as one line of figures. Item 167.
+
+    Six equal cards became one sentence of numbers, and the demotion is the design: *arrived*,
+    *queued* and *working* are the machine's business, *in review* is somebody else's, and *closed*
+    is history. None of them is an action, so none should carry the weight of one — the operator's
+    own queue is above this, in prose, and it is the only amber thing on the page.
+    """
+    cells = []
+    for title, key, _tone, states, _owed in _COLUMNS:
+        if key == "waiting":
+            # **Not skipped and not repeated.** The lede and the list above count the items waiting
+            # for a *decision*; this counts the ones a human has already taken, which is a different
+            # fact and the only place it appears. Counting the whole column again here would put the
+            # same number in three places on one screen with two different meanings.
+            mine = len(
+                list(
+                    session.scalars(
+                        select(_Item).where(_Item.state == ItemState.HUMAN_ONLY)
+                    ).all()
+                )
+            )
+            if mine:
+                cells.append(
+                    f'<span class="tally"><a class="fig" href="items?in=waiting">{mine}</a>'
+                    '<span class="cap">yours to fix</span></span>'
+                )
+            continue
+        count = len(list(session.scalars(select(_Item).where(_Item.state.in_(states))).all()))
+        label = "in review" if key == "review" else title.lower()
+        figure = (
+            '<span class="fig zero">0</span>'
+            if not count
+            else f'<a class="fig" href="items?in={key}">{count}</a>'
+        )
+        cells.append(f'<span class="tally">{figure}<span class="cap">{_h(label)}</span></span>')
+    return f'<div class="strip">{"".join(cells)}</div>'
 
 
 def _now(session: Session, prices: Prices | None) -> str:
@@ -669,11 +1131,12 @@ def _disagreements(session: Session, settings: Settings) -> str:
             f"{len(ancient)} pull request(s) have been waiting on a human for a week or more"
         )
 
+    # **Item 167 kept the assertion and dropped the band.** The paragraph above is right that empty
+    # has to be *visible* — an absent section cannot tell a reader whether the check ran or whether
+    # it was skipped — and it does not follow that saying so needs a heading and a full-width card.
+    # On a good day, which is most days, this is one line.
     if not found:
-        return (
-            '<h2>What does not add up</h2>'
-            '<div class="band quiet"><span class="chip c-passed">nothing disagrees</span></div>'
-        )
+        return '<p class="settled">Nothing disagrees: the three checks ran and found nothing.</p>'
     rows = "".join(f'<li class="bad">{_h(line)}</li>' for line in found)
     return f'<h2>What does not add up</h2><div class="band"><ul>{rows}</ul></div>'
 
@@ -703,7 +1166,6 @@ def instance(
     loop_state, loop_seen = lease.state(session)
     reporting = lease.reporting_of(session)
 
-    problems = "".join(f"<li class=\"bad\">{_h(problem)}</li>" for problem in report.problems)
     rows = [
         ("state", "ready" if report.ready else "degraded"),
         ("version", report.version),
@@ -749,44 +1211,53 @@ def instance(
     )
 
     prices = spend.Prices.from_settings(settings)
-    body = (
-        "<h1>hullwork</h1>"
-        # **The opening line stops being a lie when a session can act** (item 166). It said
-        # "Nothing here changes anything" for two versions and it was true; saying it while two
-        # buttons work would be worse than saying nothing.
-        + (
-            '<p class="sub">Read-only. Nothing here changes anything. '
-            if acting.csrf is None
-            else '<p class="sub">Signed in: an amber item can be decided here. '
-        )
-        + '<a href="projects">Projects</a> · '
-        '<a href="items">Items and their evidence</a></p>'
-        + (f"<h2>Problems</h2><ul>{problems}</ul>" if problems else "")
-        # **The three bands come first, and they are the page** (item 143). What follows them is
-        # the evaluator's material — provenance, cost, the credential split — which is kept whole
-        # and moved below, because the reader who needs it arrives once and the reader this page
-        # is for arrives daily.
-        + f"<h2>Now</h2>{_now(session, prices)}"
-        + f"<h2>Where everything is</h2>{_board(session)}"
-        # A count is a link now, so the front page needs the way in to be here too rather
-        # than only on an item: the operator arrives at this board, not at item 28.
-        + (
-            '<form method="post" action="login" class="login">'
-            '<input type="password" name="key" autocomplete="current-password" '
-            'placeholder="operator key" aria-label="operator key" required>'
-            '<button type="submit">Sign in to decide</button></form>'
-            if acting.offered and acting.csrf is None
-            else ''
-        )
-        + _disagreements(session, settings)
-        + f"<h2>State</h2><table>{table}</table>"
-        + (f"<h2>Attempts</h2><ul>{attempts}</ul>" if attempts else "")
-        + (f"<h2>What they cost</h2><ul>{spent}</ul>" if spent else "")
-        + (f"<h2>What reviewers did</h2><ul>{reviewed}</ul>" if reviewed else "")
-        + _the_credential_split(session)
-        + _what_this_instance_allows(settings)
+    waiting = list(
+        session.scalars(
+            select(_Item)
+            .where(_Item.state == ItemState.WAITING_APPROVAL)
+            .order_by(_Item.state_since.is_(None), _Item.state_since)
+        ).all()
     )
-    return _document("Hullwork — this instance", body, acting=acting)
+
+    #: **The order is the item, and not the order this page had.** the interface document
+    #: asks three questions — on fire, what is it doing, is anything waiting on me — and it answered
+    #: in that order with six equal cards, which is how the third became invisible. Answer first,
+    #: context second: a problem or a decision is something to *do*, and what the machine is busy
+    #: with is something to *know*.
+    body = (
+        _lede(session, report, waiting=waiting)
+        + _deciding(waiting, acting)
+        + _proof(
+            session,
+            merged=merged,
+            holding=holding,
+            recurred=recurred,
+            watch=recurrence.WATCH_DAYS,
+        )
+        + _now(session, prices)
+        + _strip(session)
+        + _disagreements(session, settings)
+        + '<p class="sub"><a href="items">Every item and its evidence</a> · '
+        '<a href="projects">Projects</a></p>'
+        + '<div class="more">'
+        + _signing_in(acting)
+        + _fold(
+            "How this instance is configured",
+            f'<div class="wide"><table>{table}</table></div>',
+        )
+        + (_fold("What its attempts came to", f"<ul>{attempts}</ul>") if attempts else "")
+        + (_fold("What they cost", f"<ul>{spent}</ul>") if spent else "")
+        + (_fold("What reviewers did", f"<ul>{reviewed}</ul>") if reviewed else "")
+        + _fold(
+            "Which half holds what, and what this instance allows",
+            _the_credential_split(session) + _what_this_instance_allows(settings),
+        )
+        + "</div>"
+    )
+    # The instance's own state, on the bar rather than in a folded table: it is the second question
+    # a reader has, and item 167 had buried it under a disclosure.
+    badge = ("ready", "ok") if report.ready else ("degraded", "bad")
+    return _document("Hullwork — this instance", body, acting=acting, state=badge)
 
 
 #: How many rows a list shows. Bounded because an instance that has been running for a year has
@@ -1268,7 +1739,9 @@ def _next_action(found: Item, acting: Acting, *, up: str) -> str:
     if stuck:
         parts.append(f'<p class="sub">But {_h(stuck)}.</p>')
     if found.state is ItemState.WAITING_APPROVAL and not stuck:
-        parts.append(_decide(found, acting, up=up))
+        # The buttons when there is a session, and otherwise how to get them — here as well as on
+        # the front page, because a reader can arrive straight at an item from a forge issue.
+        parts.append(_decide(found, acting, up=up) or _how_to_decide(acting, found, up=up))
     if not parts:
         return ""
     return f'<div class="next">{"".join(parts)}</div>'
@@ -1293,17 +1766,80 @@ def _decide(found: Item, acting: Acting, *, up: str) -> str:
             )
         )
         return f'<div class="decide">{forms}</div>'
-    if acting.offered:
+    # **Nothing per item when there is no session.** The instruction is the same sentence for every
+    # item on the page, and rendering it beside each one turned two decisions into two paragraphs of
+    # identical prose — the exact noise this item exists to remove. It is printed once, above the
+    # list, by `_how_to_decide`.
+    return ""
+
+
+def _login(acting: Acting, *, up: str) -> str:
+    """The login, or what to run when there is nothing to log in to. Item 168.
+
+    **`autocomplete="current-password"` and a real `<form>` are the whole feature.** A browser
+    offers to save a password it sees submitted in a form and fills it in next time — which turns
+    item 167's eight steps into two: open the page, click. There is no username field
+    because there is no user: an instance has one operator and no notion of identity, and inventing
+    one to satisfy a manager's heuristics would be inventing a product.
+    """
+    if acting.locked_minutes is not None:
         return (
-            f'<form method="post" action="{up}login" class="login">'
-            '<input type="password" name="key" autocomplete="current-password" '
-            'placeholder="operator key" aria-label="operator key" required>'
-            '<button type="submit">Sign in to decide</button></form>'
+            f'<p class="sub">Too many wrong passwords. This waits '
+            f"{_h(acting.locked_minutes)} more minute(s) before it will try again.</p>"
         )
     return (
-        '<p class="sub">This instance has no operator key, so nothing here can act. Either run '
-        f"<code>hullwork approve {_h(found.project.slug)} {_h(found.id)}</code> on the host, or "
-        "give the page a key with <code>hullwork operator-key</code>.</p>"
+        f'<form method="post" action="{up}login" class="login">'
+        '<input type="password" name="password" autocomplete="current-password" '
+        'placeholder="operator password" aria-label="operator password" required>'
+        '<button type="submit">Sign in</button></form>'
+    )
+
+
+def _signing_in(acting: Acting) -> str:
+    """A way in that does not depend on there being something to decide. Item 168.
+
+    **Found by opening the deployed page on a calm day.** The login lived inside the list of
+    decisions, so an instance with nothing waiting offered no way to sign in at all — and a lockout
+    had nowhere to be reported either, which made a working lockout look like a broken login. A
+    `<details>` keeps the calm page calm and still always reachable, with no script.
+    """
+    if acting.csrf is not None:
+        return ""
+    if acting.locked_minutes is not None:
+        return (
+            '<details open><summary>Sign in</summary><div class="folded">'
+            f'<p class="sub bad">Too many wrong passwords. This waits '
+            f"{_h(acting.locked_minutes)} more minute(s) before it will try again.</p>"
+            "</div></details>"
+        )
+    nothing_set = (
+        '<p class="sub">No password is set on this instance. Run <code>hullwork password</code> on '
+        "the host, once, and this becomes a login.</p>"
+    )
+    inside = _login(acting, up="") if acting.offered else nothing_set
+    return f'<details><summary>Sign in</summary><div class="folded">{inside}</div></details>'
+
+
+def _how_to_decide(acting: Acting, found: Item | None = None, *, up: str = "") -> str:
+    """How to get the buttons, said once for the whole page rather than once per item.
+
+    `found` names the command exactly when there is one item in question, which on an item's own
+    page there is: `hullwork approve checkout-api 12` is something to run, and
+    `hullwork approve <project> <item>` is something to translate first.
+    """
+    if acting.csrf is not None:
+        return ""
+    if acting.offered:
+        return _login(acting, up=up)
+    command = (
+        f"hullwork approve {_h(found.project.slug)} {_h(found.id)}"
+        if found is not None
+        else "hullwork approve &lt;project&gt; &lt;item&gt;"
+    )
+    return (
+        '<p class="sub how">No password is set on this instance, so nothing here can act. Run '
+        "<code>hullwork password</code> on the host to sign in from a browser, or decide from "
+        f"there — <code>{command}</code>.</p>"
     )
 
 
@@ -1336,8 +1872,8 @@ def item(
             f" — {_h(scrub.text(found.lane_reason))}" if found.lane_reason else ""
         )),
         ("kind", _h(found.kind.value)),
-        ("seen", f"{_h(found.occurrences)} time(s), first {_h(found.first_seen)}, "
-                 f"last {_h(found.last_seen)}"),
+        ("seen", f"{_h(found.occurrences)} time(s) · first {_when(found.first_seen)}"
+                 f" · last {_when(found.last_seen)}"),
         ("issue", _issue_link(settings, found)),
         ("in the tracker", _link(found.permalink) if found.permalink else "—"),
     ]
@@ -1380,7 +1916,7 @@ def item(
     body = (
         f"<h1>#{_h(found.id)} {_h(title)}</h1>"
         f'<p class="sub"><a href="../items">All items</a> · <a href="../">Instance</a></p>'
-        f"<table>{table}</table>"
+        f'<div class="band"><table>{table}</table></div>'
         + _next_action(found, acting, up="../")
         + (
             f'<p class="sub">{_h(_NOT_STORED)}</p>' + "".join(blocks)
@@ -1391,7 +1927,24 @@ def item(
             else '<p class="sub">No attempts yet, so there is no evidence to read here.</p>'
         )
     )
-    return _document(f"Hullwork — item {found.id}", body, acting=acting, up="../")
+    # The item's own state on the bar, in the colour its column uses on the front page: a reader who
+    # arrived from a forge issue has not seen the board, and this is the fastest way to say where
+    # it is.
+    tone = {
+        ItemState.WAITING_APPROVAL: "mine",
+        ItemState.HUMAN_ONLY: "mine",
+        ItemState.PR_OPEN: "mine",
+        ItemState.DONE: "ok",
+        ItemState.FAILED: "bad",
+        ItemState.REJECTED: "bad",
+    }.get(found.state, "")
+    return _document(
+        f"Hullwork — item {found.id}",
+        body,
+        acting=acting,
+        up="../",
+        state=(found.state.value, tone),
+    )
 
 
 def _issue_link(settings: Settings, found: Item) -> str:

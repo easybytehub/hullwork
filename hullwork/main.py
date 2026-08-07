@@ -449,9 +449,11 @@ def _acting(session: Session, request: Request) -> page.Acting:
     the answer and never the cookie, so a view cannot accidentally treat a *read* token as
     authority.
     """
+    locked = operator.locked_for(session)
     return page.Acting(
         csrf=operator.acting(session, request.cookies.get(operator.COOKIE)),
         offered=operator.configured(session),
+        locked_minutes=None if locked is None else max(1, int(locked.total_seconds() // 60)),
     )
 
 
@@ -474,23 +476,22 @@ async def page_login(
     request: Request,
     session: Annotated[Session, Depends(_readiness_session)],
 ) -> RedirectResponse:
-    """Exchange the operator key for a session cookie. Item 166.
+    """Exchange the password for a session cookie. Item 168.
 
     **The one route that accepts a secret in a body, and it answers the same either way.** A wrong
-    key redirects to the page exactly as a right one does: an attacker with the read link learns
-    nothing from the response about whether a key was right, and the operator finds out by whether
-    the buttons are there. No error page, because an error page is an oracle.
+    password redirects to the page exactly as a right one does: somebody with the read link learns
+    nothing from the response, and the operator finds out by whether the buttons are there. No error
+    page, because an error page is an oracle.
 
-    `Secure` is read off the request rather than hardcoded. Hardcoding it on would silently break
-    the plain-HTTP tailnet deployment this runs on — the cookie would never be sent and the login
-    would look broken; hardcoding it off would be wrong the day a TLS proxy is put in front. On the
-    tailnet the transport is encrypted by WireGuard even without it.
+    `Secure` is read off the request rather than hardcoded. Hardcoding it on would silently break a
+    deployment served over plain HTTP behind a VPN — the cookie would never be sent and the login
+    would look broken; hardcoding it off would be wrong the day a TLS proxy is put in front.
     """
     if not page.opens(session, token):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
 
-    key = await _field(request, "key")
-    issued = operator.log_in(session, key) if key else None
+    supplied = await _field(request, "password")
+    issued = operator.sign_in(session, supplied) if supplied else None
     redirect = _to_page(token)
     if issued is not None:
         cookie, _csrf = issued
