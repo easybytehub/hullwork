@@ -131,6 +131,20 @@ The workflow refuses a tag whose version disagrees with `hullwork.__version__`, 
 anything — a release whose image says one version and whose wheel says another is unusable for
 anybody pinning either, and the bug report arrives months later from somebody who cannot reproduce it.
 
+**Then, once the image is public**, and in this order, because each step needs the one before it:
+
+```bash
+./scripts/record-the-published-surface.py    # asks the new image what it accepts
+# move the pins: README.md, docker-compose.yml, docs/install.md, PRIVACY.md
+```
+
+That is what lets the documentation describe the new release — including anything held back for it,
+per [CONTRIBUTING](../CONTRIBUTING.md#documentation-describes-the-released-artefact-not-this-checkout).
+Skipping either half is not quiet: re-record without moving the pins and the pins disagree with the
+recording; move the pins without re-recording and they disagree the other way. Both fail
+`tests/test_the_documentation_describes_the_published_artefact.py`, which is the whole point of
+storing the recording rather than trusting the sequence.
+
 ## The private forge
 
 Development happens on a Forgejo instance, and this repository is a **derivation** of it: the publish
