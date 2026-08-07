@@ -123,9 +123,38 @@ not prove the artefact is good — that is what the gates and `docs/status.md` a
 ./scripts/publish.sh                     # build the public tree and read the diff
 ./scripts/publish.sh --pr MESSAGE_FILE   # gate it, then open the pull request
 gh pr merge <branch> --squash --delete-branch    # once the checks are green
-git tag -a v0.1.0aN -m "…"               # the annotation is the release notes
-git push origin v0.1.0aN
+git tag -a v0.1.0aN -m "…"               # here, for the record; the annotation is the notes
+#   then create the same tag ON THE PUBLIC REPO, pointing at its own main — see the warning below.
+#   Pushing this tag to the public remote publishes the private history it points at.
 ```
+
+> [!warning] **The tag goes on the public commit, and `git push <mirror> vX` does not do that.**
+> Measured on 2026-08-07, cutting `0.1.0a7`: the tag was created in the development checkout — where it
+> points at a **private** commit — and pushed to the public remote. Git pushed the objects the tag
+> needed, so for about ten minutes the withheld paths were browsable at that ref: `work/` (41 files)
+> and `deploy/` (the deployment's compose and the relay). No credential was in them — `deploy.env` is
+> not tracked — but the tailnet address, the port, the host's name and the private forge's hostname
+> were, which is exactly the set `publish.sh` guards.
+>
+> Two things made it worse before they made it better. The tag ruleset **refused the deletion**, which
+> is the rule doing its job and meant disabling it for the length of one API call. And the tag push
+> started **two** release runs: one building from the private commit, which would have published an
+> image with those paths inside it. It was cancelled at 40 seconds; the derived one produced the
+> release.
+>
+> So: after the pull request merges, create the tag **on the public repository, pointing at its own
+> `main`** — not in this checkout. The four earlier tags were cut that way and none of them exposes
+> anything.
+>
+> ```bash
+> head=$(gh api repos/<owner>/<repo>/commits/main --jq .sha)
+> obj=$(gh api -X POST repos/<owner>/<repo>/git/tags \
+>   -f tag=v0.1.0aN -f message="…" -f object="$head" -f type=commit --jq .sha)
+> gh api -X POST repos/<owner>/<repo>/git/refs -f ref=refs/tags/v0.1.0aN -f sha="$obj"
+> ```
+>
+> The tag in the development repository is still worth having — it is where the release was cut from —
+> and it must never be pushed to the public remote.
 
 The workflow refuses a tag whose version disagrees with `hullwork.__version__`, before it pushes
 anything — a release whose image says one version and whose wheel says another is unusable for

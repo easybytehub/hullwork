@@ -15,7 +15,7 @@ and there is no tenth:
   "schema": 1,
   "exception": "ManifestError",
   "frames": [{"module": "hullwork.manifest", "function": "parse_manifest", "lineno": 707}],
-  "release": "0.1.0a6",
+  "release": "0.1.0a7",
   "python": "3.12.13",
   "platform": "linux",
   "operation": "receiver",
