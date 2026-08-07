@@ -94,10 +94,11 @@ def test_the_right_token_opens_it(db: Session, client: TestClient) -> None:
 
     assert answered.status_code == 200
     assert answered.headers["content-type"].startswith("text/html")
-    # The board, not the heading. This test is about the token opening the door; asserting on
-    # title text made it fail when item 143 renamed the page, which is a rename breaking a test
-    # about authentication. A band that only the instance view renders is the durable landmark.
-    assert "Where everything is" in answered.text
+    # A structural landmark, not prose. This test is about the token opening the door, and asserting
+    # on title text made it fail when item 143 renamed the page and again when item 167 restructured
+    # it — a rename breaking a test about authentication. `class="lede"` is what only the instance
+    # view renders, and it is the one element that survives a rewording.
+    assert 'class="lede' in answered.text
 
 
 def test_an_item_that_predates_the_clock_reads_as_not_recorded() -> None:
@@ -191,6 +192,8 @@ def test_the_policy_forbids_script_because_there_is_none(db: Session, client: Te
 #: The only routes under the page prefix that may change anything. Item 166 added them and this
 #: tuple is the whole of the exception: everything else stays `GET`-only.
 _MAY_POST = (
+    # Three items, three shapes of this tuple, and it noticed each time: item 167 removed `/login`
+    # for a one-time link outside the prefix, and item 168 put it back as a password form.
     f"{page.PREFIX}/{{token}}/login",
     f"{page.PREFIX}/{{token}}/logout",
     f"{page.PREFIX}/{{token}}/items/{{item_id}}/approve",
@@ -198,13 +201,13 @@ _MAY_POST = (
 )
 
 
-def test_only_the_four_named_routes_under_the_prefix_accept_a_post(client: TestClient) -> None:
+def test_only_the_named_routes_under_the_prefix_accept_a_post(client: TestClient) -> None:
     """**This test used to say `GET`-only, and item 166 is why it does not any more.**
 
     The invariant it was protecting was never "no POST" — it was *no accidental mutation surface*,
     asserted by walking the application's own routes rather than by trusting a decorator to stay a
     `get` through the next refactor. That still holds, and it is now specific: four routes may take
-    a POST, they are named here, and a fifth appearing fails this test on the day it is written.
+    a POST, they are named here, and one more appearing fails this test on the day it is written.
 
     A view acquiring a POST by accident is what this catches, and it is worth catching: the token is
     a bearer credential in a URL, so a mutating route that only checks the token would let anybody

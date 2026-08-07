@@ -657,33 +657,51 @@ class PageAccess(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
 
 
-class OperatorKey(Base):
-    """The credential that **acts**. Item 166. One row, id 1, or none at all.
+class OperatorPassword(Base):
+    """The password that unlocks the two buttons. Item 168. One row, id 1, or none at all.
 
-    **Separate from `PageAccess` on purpose, and that separation is the whole security model.** The
-    page token is a bearer credential that lives in a URL — a saved page, a screenshot of the
-    address bar, a link mailed to a colleague — so it reads everything and may never spend money.
-    This one never appears in a URL: it is pasted into a form once, exchanged for a session, and
-    after that only the session cookie travels.
+    **Third design in three items, and the two before it failed the same test: could an operator
+    actually use it.** Item 166 stored 32 random bytes and asked for them to be pasted into a form.
+    Item 167 replaced that with a one-time link from the CLI — which removed the paste and added a
+    trip to the host: open the page, ssh, run a command, copy a link, open it, come back, reload.
+    Eight steps, twice a day, against the one command it was supposed to improve on.
 
-    **None at all is the default, and it means the buttons do not exist.** An instance that upgrades
-    into this item is byte-identical to the one before it until somebody runs
-    `hullwork operator-key`.
+    A password is what every self-hosted tool does, and the reason is not convention: **a browser's
+    password manager fills it in.** One visit to the host, ever; after that the operator opens the
+    page and clicks.
 
-    Generated, never chosen. 32 random bytes hashed with SHA-256, for the reason already written
-    beside the page token: against 32 random bytes a KDF buys nothing. A human-chosen password would
-    need scrypt or argon2, a new dependency, and a guessing-rate story — three problems this does
-    not have.
+    **The reason I gave for rejecting it was wrong**, and worth recording because it decided a
+    milestone: I said a chosen password needs scrypt or argon2 and therefore a new dependency in the
+    half of Hullwork that listens on the network. `hashlib.scrypt` is in the standard library.
+    Measured at `n=2**14`: 37 ms per attempt, which is both the work factor and most of the answer
+    to online guessing.
     """
 
-    __tablename__ = "operator_key"
+    __tablename__ = "operator_password"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    #: SHA-256, compared in constant time. See `security.hash_token`.
-    key_hash: Mapped[str] = mapped_column(String(64))
+    #: 16 random bytes, hex. Per-instance, so two deployments with the same password store different
+    #: hashes and one leaked table says nothing about the other.
+    salt: Mapped[str] = mapped_column(String(32))
+
+    #: `hashlib.scrypt(...).hex()`. Compared with `hmac.compare_digest`, never with `==`.
+    key: Mapped[str] = mapped_column(String(64))
+
+    #: The cost, stored rather than assumed. A password set in 2026 must keep verifying after the
+    #: default is raised, and a row that does not carry its own parameters cannot be re-hashed on a
+    #: later sign-in without locking the operator out first.
+    n: Mapped[int] = mapped_column(Integer)
+    r: Mapped[int] = mapped_column(Integer)
+    p: Mapped[int] = mapped_column(Integer)
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
+
+    #: Consecutive failures, and when they stop counting. **On this row rather than per address**:
+    #: an instance has one operator, so a lockout is about the credential and not about who is
+    #: asking — and a per-address counter is defeated by changing address, which is free.
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(UtcDateTime(), default=None)
 
 
 class OperatorSession(Base):
@@ -712,9 +730,11 @@ class OperatorSession(Base):
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
 
-    #: When this stops being accepted. An absolute expiry rather than an idle timeout: an idle
-    #: timeout has to be written on every request, which turns a read of the page into a write to
-    #: the database — and the receiver's sweep already contends for that lock.
+    #: When this stops being accepted. **Extended on use, but only past the halfway mark** (item
+    #: 168): a true idle timeout writes on every request, which turns reading the page into a write
+    #: and the receiver's sweep already contends for that lock. Renewing at the halfway point is one
+    #: write every fifteen days and gets the same result — an operator who opens the page most weeks
+    #: never signs in twice.
     expires_at: Mapped[datetime] = mapped_column(UtcDateTime())
 
 
