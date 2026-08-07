@@ -87,6 +87,39 @@ protect you, and the machine has a public IP — `--host 0.0.0.0` would publish 
 token and all, to the internet. The healthcheck has to be overridden to match, since the one baked
 into the image assumes port 8000.
 
+> [!warning] **And host networking moves the receiver behind the host's firewall, which is where this
+> failed silently for ten days.** With the receiver on the host and the tracker in a container, every
+> delivery is now *container → host*, and a host firewall usually has an opinion about that. Measured
+> on this deployment on **2026-08-07**: deliveries had stopped on 27-jul and nothing said so until
+> `doctor` grew a check for it, because the inventory sweep kept filing items and the receiver runs
+> with `--no-access-log` — **a successful webhook leaves no trace, so an empty log proves nothing
+> either way.**
+>
+> The cause, and the part worth remembering: `/etc/ufw/before.rules` held
+>
+> ```
+> -A ufw-before-input -i br+ -m conntrack --ctstate NEW -j DROP
+> ```
+>
+> a reasonable piece of hardening — containers may not reach host services — and the two
+> `ufw allow` rules added later to permit the webhook had **0 packets on their counters**. They could
+> never match: `before.rules` runs *before* `ufw-user-input`, so **no ufw user rule can override a
+> rule in `before.rules`**. The exception has to go in the same file, above the `DROP`:
+>
+> ```
+> -A ufw-before-input -i br+ -d 10.0.0.5 -p tcp --dport 8000 -m conntrack --ctstate NEW -j ACCEPT
+> ```
+>
+> Two things to check rather than assume. **Counters, not rule listings** — `iptables -L … -v` on the
+> rule you believe is working answers in one line what reading the config cannot. And **probe from
+> inside the tracker's container**, not from the host: the host reaching its own address proves
+> nothing about the path a delivery takes.
+>
+> Recovering what was dropped does not need a fabricated error. A tracker records the notifications it
+> created, so the ones that failed can be re-sent — on GlitchTip,
+> `send_notification.func(<id>)` from `manage.py shell`. Two real dropped reports were replayed here;
+> one deduped onto an item the sweep had already filed, which is the dedup working across both paths.
+
 ## Production compose, in full
 
 ```yaml
