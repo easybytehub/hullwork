@@ -48,6 +48,18 @@ Each of these is a property of the code, and the file that implements it explain
 - **The two halves hold different credentials** (DR-0009). The half that answers webhooks — the one an
   attacker can reach — cannot push, and refuses to start if it finds a credential that can. The half
   that can push listens on nothing.
+- **A webhook is authenticated by the token in its URL, and by nothing else.** That token is minted
+  once, shown once, and stored as a one-way hash; a wrong one is refused identically on every
+  provider's route, so the door cannot be used to confirm which tracker a project uses.
+
+  **What that does not cover, stated once for both providers** — Sentry's route is built and not in
+  a release yet (`docs/status.md`), and this is what it will be authenticated by when it lands.
+  GlitchTip cannot sign its webhooks —
+  no header, no secret, no setting — so the URL is the credential. Sentry *can* sign, and Hullwork
+  does not verify it: doing so requires holding Sentry's client secret in a form it can be read back
+  from, which is a storage decision this project has not made. So **anyone who obtains the URL can
+  post to it**, whichever tracker you use. Treat it as a secret: it is in your tracker's
+  configuration, and `hullwork projects rotate-secret` replaces it.
 
 ### What leaves the instance
 

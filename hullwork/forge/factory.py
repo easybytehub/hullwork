@@ -39,12 +39,16 @@ def make_forge(settings: Settings) -> Forge | None:
 
 
 def make_code_forge(settings: Settings) -> ForgeCode | None:
-    """The forge an agent pushes through. `None` until `HULLWORK_FORGE_CODE_TOKEN` is set.
+    """The forge Hullwork pushes verified work through. `None` until the code token is set.
 
     Separate function, separate setting, separate token — so that no request handler and no sweep
     can ever end up holding a credential that can write code. It falls back to nothing rather than
     to the ingest token: an accidental fallback is exactly how the boundary would be lost, quietly,
     on the day M2 lands.
+
+    **Two callers now, and the second one runs no agent** (item 178). `hullwork deps --open` pushes
+    an upgrade the project's own suite passed, with no model and no gateway involved. This used to
+    say *the forge an agent pushes through*; `config.py` carries the decision and what it costs.
     """
     if not settings.forge_url or not settings.forge_code_token:
         return None

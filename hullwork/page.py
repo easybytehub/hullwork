@@ -1154,9 +1154,9 @@ def instance(
     """What `hullwork status` says, for somebody who does not have a terminal on this host.
 
     **Every number comes from the function `status` calls**, never from a second query written for
-    this page: `readiness.check`, `outcomes.funnel`, `recurrence.counted` and `undecided`,
-    `lease.state` and `reporting_of`. A page that recomputed them would drift, and the first anybody
-    would know is a reader and an operator disagreeing about the same instance.
+    this page: `readiness.check`, `outcomes.desk`, `outcomes.funnel`, `recurrence.counted` and
+    `undecided`, `lease.state` and `reporting_of`. A page that recomputed them would drift, and the
+    first anybody would know is a reader and an operator disagreeing about the same instance.
     """
     from hullwork import lease, outcomes, readiness, recurrence
 
@@ -1195,6 +1195,11 @@ def instance(
         ),
     ]
     table = "".join(f"<tr><th>{_h(name)}</th><td>{_h(value)}</td></tr>" for name, value in rows)
+    # **The number DR-0017 is measured by** (item 183), and it was in the terminal and not here —
+    # which is the same defect item 136 already found on this page once: a fact the instance knew,
+    # put where nobody reading would find it. The interface design says this surface exists
+    # to show what was verified and what was not; a count of attempts is not that, and this is.
+    desk = "".join(f"<li>{_h(line)}</li>" for line in outcomes.desk_lines(outcomes.desk(session)))
     attempts = "".join(f"<li>{_h(line)}</li>" for line in outcomes.lines(outcomes.funnel(session)))
     spent = "".join(
         f"<li>{_h(line.strip())}</li>"
@@ -1245,6 +1250,10 @@ def instance(
             "How this instance is configured",
             f'<div class="wide"><table>{table}</table></div>',
         )
+        # Before the attempts block, exactly as `status` orders them: this one has *what arrived*
+        # as its denominator and that one has *what was attempted*, so a reader who opens one
+        # should meet the wider question first.
+        + (_fold("What arrived, and how much left your desk", f"<ul>{desk}</ul>") if desk else "")
         + (_fold("What its attempts came to", f"<ul>{attempts}</ul>") if attempts else "")
         + (_fold("What they cost", f"<ul>{spent}</ul>") if spent else "")
         + (_fold("What reviewers did", f"<ul>{reviewed}</ul>") if reviewed else "")

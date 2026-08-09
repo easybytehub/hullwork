@@ -364,6 +364,10 @@ needs_docker = pytest.mark.skipif(
 #: `docker compose build` had made it in some earlier session and nothing recorded the dependency,
 #: so the test failed rather than skipped, with a message about the gateway rather than the image.
 #:
+#: **And the instruction went stale under it** (item 191, 2026-08-09). `docker-compose.yml` now pins
+#: a published image and has no build stage — its own comment says to *add* one — so
+#: `docker compose build` exits 0 and produces nothing. Measured while chasing this exact skip.
+#:
 #: A skip with a reason, not a build: building it here would put minutes into an unrelated test run
 #: and hide the same gap. Saying what is missing is the honest answer, and the error that exposed
 #: this now prints Docker's own words, which is how it was diagnosed in one read.
@@ -385,7 +389,7 @@ needs_image = pytest.mark.skipif(
         capture_output=True, timeout=30, check=False,
     ).returncode
     != 0,
-    reason="needs the hullwork:dev image; build it with `docker compose build`",
+    reason="needs the hullwork:dev image; build it with `docker build --tag hullwork:dev .`",
 )
 
 

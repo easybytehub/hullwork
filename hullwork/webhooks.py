@@ -158,20 +158,36 @@ async def receive(
 
 
 def _authenticate(provider: str, token: str, raw: bytes, expected_hash: str) -> bool:
-    """Per provider, because they do not offer the same thing.
+    """**The token in the path is the credential, for both providers.** Item 189, DR-0009.
 
-    GlitchTip cannot sign its webhooks — no header, no secret, no setting — so the token in the path
-    is the credential. Sentry does sign, and its route is not enabled yet: verifying an HMAC means
-    holding its client secret in a **reversible** form, which is a different storage decision from
-    the one-way hash used here and deserves to be made deliberately rather than in passing.
+    GlitchTip cannot sign its webhooks — no header, no secret, no setting — so the token in the URL
+    has been the credential since M1, verified against a one-way hash.
+
+    **Sentry does sign, and this deliberately does not check it.** Verifying its HMAC means holding
+    its client secret in a **reversible** form, which is a different storage decision from every
+    other credential here and has not been made. This route answered `501` for that reason, and the
+    reason was written as *reversible secret or nothing* — which left out the option the operator
+    took on 2026-08-09: give Sentry **the same credential GlitchTip has**, checked the same way.
+    The route was refusing to offer a guarantee better than the one the only working provider gets,
+    which is coherent only if a signature is mandatory — and if it were, GlitchTip could not be
+    enabled either.
+
+    **What that does not protect against, said plainly.** An HMAC would authenticate the *body*, so
+    somebody who obtained the URL — from a log, a proxy, a referrer — but not Sentry's client secret
+    could not post. Here, knowing the URL is enough, because the URL contains the credential. That
+    is the exposure GlitchTip users have had all along; this extends it to a second provider rather
+    than creating it, and verifying the HMAC stays open as the upgrade.
+
+    `raw` is unread on purpose, and stays in the signature: it is what an HMAC would be computed
+    over, and removing the parameter would make adding that verification a change to every caller
+    rather than a change to this function.
     """
-    if provider == "glitchtip":
+    del raw
+    if provider in ("glitchtip", "sentry"):
+        # **One expression for both**, so the two refusals cannot come to differ. A wrong token has
+        # to look identical on either route: a difference is a way to confirm which provider a slug
+        # is registered with, by probing, from outside (item 122's rule for the page, here).
         return verify_token(token, expected_hash)
-    if provider == "sentry":
-        raise HTTPException(
-            status.HTTP_501_NOT_IMPLEMENTED,
-            "the Sentry route is not enabled in this version; use GlitchTip",
-        )
     return False
 
 

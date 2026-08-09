@@ -238,9 +238,8 @@ def test_one_call_lands_every_change_as_one_commit() -> None:
 def test_the_sign_off_trailer_is_never_requested() -> None:
     """The API will add it, and that is exactly why we must not ask.
 
-    `CONTRIBUTING.md` and the worker contract both say the DCO sign-off is a human act, done at the
-    merge gate. A machine that can emit the trailer can certify provenance it has no standing to
-    certify.
+    `CONTRIBUTING.md` says the DCO sign-off is a human act, done at the merge gate. A machine
+    that can emit the trailer can certify provenance it has no standing to certify.
     """
     seen: dict[str, Any] = {}
 

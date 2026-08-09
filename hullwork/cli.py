@@ -14,12 +14,13 @@ import getpass
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import threading
 from collections.abc import Callable, Sequence
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -31,22 +32,30 @@ from sqlalchemy.orm import Session
 
 from hullwork import (
     __version__,
+    bump,
     credentials,
     db,
+    dependencies,
     doctor,
+    features,
     lease,
     operator,
+    osv,
     outcomes,
     page,
     propose,
     readiness,
     recurrence,
+    refit,
+    resolve,
     spend,
     territory,
     triage,
+    upgrades,
     work,
 )
 from hullwork import decisions as decide
+from hullwork import dispatch as dispatch_module
 from hullwork import upstream as upstream_module
 from hullwork.config import ConfigError, Settings, get_settings
 from hullwork.credentials import PushCapability
@@ -348,6 +357,741 @@ def _the_image_must_be_able_to_host_a_phase(
         raise CommandError(refusal)
 
 
+def _cmd_deps(args: argparse.Namespace, settings: Settings, out: TextIO) -> int:
+    """Which pinned dependencies have something published against them. Item 172, DR-0016.
+
+    **Standalone, and that is the product claim rather than a convenience.** No forge, no model, no
+    Docker, no database — a person can run this against their own checkout in the first minute,
+    before they have decided anything. It is the only half of DR-0016 that needs nothing.
+    """
+    checkout = Path(args.checkout).resolve()
+    # `--fix` and `--open` are `--verify` plus one more step each: there is nothing to fix that has
+    # not first been measured breaking, and nothing to open that has not first been measured
+    # passing. Read once, here, so everything below asks the same question.
+    opening = bool(getattr(args, "open", False))
+    verifying = bool(args.verify or getattr(args, "fix", False) or opening)
+    # **Before the lock files are read and before OSV is asked**, for `_manifest_for_verify`'s
+    # reason and with more at stake: `--open` is the one flag here that can write to somebody's
+    # repository, and finding out after two container builds that there is no credential is a
+    # refusal that arrives after the work it invalidates.
+    code_forge = _forge_for_opening(settings, checkout) if opening else None
+    if getattr(args, "fix", False):
+        # **Item 048's finding, on the path that had not learned it** (found by running `--fix` for
+        # the first time, 2026-08-09). This was raised inside `refit.run`, so it arrived *after*
+        # every container had been built and every suite run — the most expensive place available —
+        # and it arrived as a `WiringError` traceback rather than as a refusal, which item 120 is
+        # about. The message itself was right; where and how it appeared was not.
+        _refuse_without_a_model(settings)
+    # **Before the lock files are read and before OSV is asked.** Found by running it: validating
+    # the manifest after the report meant paying for a network round trip and a full listing to be
+    # told a file was missing — and the refusal arrived interleaved with the output it invalidated.
+    manifest = _manifest_for_verify(checkout) if verifying else None
+    paths = _tracked_files(checkout)
+
+    def read(path: str) -> str | None:
+        try:
+            return (checkout / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+    pinned = dependencies.read_lockfiles(paths, read)
+    if not pinned:
+        raise CommandError(
+            f"no lock file in {checkout}: looked for "
+            f"{', '.join(dependencies.WHAT_IS_LOOKED_FOR)}.\n"
+            f"  A declaration is a range and a range does not say what your build resolved to, so "
+            f"there is nothing here a vulnerability database can be asked about. Commit a lock "
+            f"file, or pin with `==` in requirements.txt."
+        )
+
+    sources = sorted({d.source for d in pinned})
+    print(f"{len(pinned)} pinned dependencies, from {', '.join(sources)}", file=out)
+
+    # Said before the answer rather than after it: a file whose ranges were skipped reports fewer
+    # dependencies than it has, and a reader who learns that afterwards has already believed it.
+    #
+    # **Every requirements file that was read, not the root one by name** (item 180). Keyed off the
+    # same predicate the reader uses, so a layout that becomes readable becomes countable in the
+    # same edit — two places deciding what a requirements file is would eventually disagree, and
+    # the half that goes quiet is this one.
+    for source in sources:
+        if dependencies.is_requirements(source):
+            text = read(source) or ""
+            skipped = dependencies.unpinned(text)
+            if skipped:
+                print(
+                    f"  {skipped} line(s) in {source} are ranges rather than `==` pins and were "
+                    f"not checked",
+                    file=out,
+                )
+
+    # **Quiet here and nowhere else.** httpx2 logs every request at INFO, which is right for the
+    # dispatcher — those lines are how an attempt gets diagnosed — and wrong for a report a person
+    # reads. This is the command a stranger runs first, and one `HTTP Request: POST …` line in the
+    # middle of its output is the kind of friction the cold evaluations kept finding.
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
+    with osv.Osv() as database:
+        findings = database.affected(pinned)
+
+    if not findings:
+        print("\nNothing published against any of those versions.", file=out)
+        return 0
+
+    print(f"\n{len(findings)} with a published advisory:\n", file=out)
+    for finding in findings:
+        dep = finding.dependency
+        print(f"  {dep.name} {dep.version}  ({dep.ecosystem}, {dep.source})", file=out)
+        for advisory in finding.advisories:
+            if advisory.has_a_fix:
+                where = " or ".join(advisory.fixed)
+                ends = f"fixed in {where}"
+            else:
+                # Not "no fix found": the advisory publishes none, which is a fact about the
+                # advisory rather than a gap in this reading.
+                ends = "no fixed version is published — there is no upgrade to attempt"
+            print(f"      {advisory.id}: {ends}", file=out)
+            if advisory.summary:
+                print(f"        {advisory.summary}", file=out)
+            print(f"        {advisory.url}", file=out)
+        print("", file=out)
+
+    if not verifying:
+        print(
+            "Whether any of these upgrades survives your own test suite is a different question, "
+            "and nothing above has run it. `--verify` runs it.",
+            file=out,
+        )
+        return 0
+
+    assert manifest is not None  # noqa: S101 - built above when --verify is set
+    reports = _verify_upgrades(checkout, paths, read, manifest, findings, out)
+    if opening:
+        assert code_forge is not None  # noqa: S101 - built above when --open is set
+        _open_the_ones_that_pass(code_forge, checkout, manifest, findings, reports, out)
+    if not getattr(args, "fix", False):
+        return 0
+    return _fix_the_ones_that_break(
+        args, settings, checkout, paths, manifest, findings, reports, out
+    )
+
+
+def _manifest_for_verify(checkout: Path) -> Manifest:
+    """The manifest `--verify` needs, or a refusal naming exactly what is missing. Item 174.
+
+    **Called before the lock files are read and before OSV is asked**, because everything it checks
+    is knowable from disk. Validating afterwards spent a network round trip and a full listing to
+    tell somebody a file was missing, and printed the refusal interleaved with the report it had
+    just invalidated. Found by running it.
+    """
+    manifest_path = checkout / MANIFEST_FILENAME
+    if not manifest_path.exists():
+        raise CommandError(
+            f"--verify needs a {MANIFEST_FILENAME} in {checkout}: it says which image your tests "
+            f"run in and what the test command is, and neither can be guessed.\n"
+            f"  `hullwork propose --checkout {checkout}` writes one from your CI configuration."
+        )
+    manifest = parse_manifest(manifest_path.read_text(encoding="utf-8"))
+    if manifest.runtime is None or not manifest.runtime.base:
+        raise CommandError(
+            "--verify needs `runtime.base`: an image your tests already run in. Without it there "
+            "is nothing to build the upgrade into."
+        )
+    if not manifest.tests:
+        raise CommandError(
+            "--verify needs `tests`: the command that runs your suite. That suite is the whole "
+            "verdict — without it there is nothing to ask."
+        )
+    return manifest
+
+
+def _verify_upgrades(
+    checkout: Path,
+    paths: Sequence[str],
+    read: Callable[[str], str | None],
+    manifest: Manifest,
+    findings: Sequence[osv.Finding],
+    out: TextIO,
+) -> list[bump.Report]:
+    """Apply each published fix in a sandbox and let the project's own suite decide. Item 174.
+
+    Returns the reports as well as printing them, because item 179 has to act on the same ones the
+    reader was shown — recomputing them would be a second verdict about the same upgrade, and the
+    two could differ by the time anybody noticed.
+    """
+    print("\n--- verifying each published fix against your own suite ---\n", file=out)
+    reports: list[bump.Report] = []
+    for finding in findings:
+        dep = finding.dependency
+        versions = bump.candidates(finding.advisories)
+        refusal = _cannot_be_verified(dep, manifest, versions)
+        if refusal is not None:
+            print(f"  {dep.name}: {refusal}\n", file=out)
+            # **Counted, not merely printed** (item 182). A refusal that only goes to the terminal
+            # is absent from the summary below, so a run that could verify none of six reads as
+            # `0 blocked` — and the one number in this whole command that a person acts on is a
+            # count. "I could not verify this" is a first-class answer and it has to be in the
+            # tally, which is the property `docs/what-hullwork-is.md` puts second.
+            reports.append(
+                bump.Report(
+                    package=dep.name,
+                    was=dep.version,
+                    answers=(
+                        bump.Answer(
+                            bump.Verdict.CANNOT_MOVE, dep.name, dep.version,
+                            versions[0] if versions else "", detail=refusal,
+                        ),
+                    ),
+                )
+            )
+            continue
+        report = _verify_one(checkout, paths, read, manifest, dep, versions, out)
+        if report is not None:
+            reports.append(report)
+
+    _print_the_queue(reports, out)
+    return reports
+
+
+def _forge_for_opening(settings: Settings, checkout: Path) -> object:
+    """The credential `--open` pushes through, or a refusal that says what is missing. Item 178.
+
+    **It is `HULLWORK_FORGE_CODE_TOKEN`, and the operator decided that on 2026-08-09.** The
+    alternative was a third token of its own, and it was declined for a reason worth keeping: a
+    third token would need exactly the same scope — `write:repository` — so it would be an
+    audit boundary rather than a capability boundary, which is not what the split between
+    `forge_token` and `forge_code_token` is. That one is real and was measured (item 073); a
+    same-scope sibling would be the same power under another name.
+
+    What that decision costs is one sentence, and it has been paid: `config.py` no longer calls this
+    *the credential an agent pushes through*, because this path opens pull requests with no agent
+    having run. Nobody may infer "a model was called" from the fact that something was pushed.
+
+    Called before the lock files are read and before OSV is asked, so a missing credential costs
+    nothing to discover.
+    """
+    forge = make_code_forge(settings)
+    if forge is None:
+        raise CommandError(
+            "--open needs HULLWORK_FORGE_URL and HULLWORK_FORGE_CODE_TOKEN: it opens pull "
+            "requests, which is the one thing in `deps` that writes to your repository.\n"
+            "  Everything else here needs no account anywhere — `--verify` runs your suite "
+            "against each upgrade and prints the answer, and it is the honest way to see what "
+            "this would open before letting it."
+        )
+    coordinate = _coordinate_from(_origin_url(checkout))
+    if coordinate == "owner/name":
+        forge.close()
+        raise CommandError(
+            f"--open needs to know which repository this is, and {checkout} has no usable `origin` "
+            f"remote to read it from.\n"
+            f"  Add one, or run without --open: the verification does not need a coordinate "
+            f"because it opens nothing."
+        )
+    return forge
+
+
+def _refuse_without_a_model(settings: Settings) -> None:
+    """Refuse `--fix` before anything is built when no model credential is configured. Item 048.
+
+    Knowable from the settings and nothing else, so it costs nothing to answer — which is the only
+    reason a refusal belongs this early. `--verify` is untouched: it calls no model and must keep
+    needing no credential of any kind, which is the property `deps` is sold on.
+    """
+    try:
+        work._model_credential(settings)
+    except work.WiringError as exc:
+        raise CommandError(
+            f"{exc}\n"
+            f"  `--verify` on its own needs no credential at all and still runs your suite "
+            f"against every published fix — it is `--fix`, which asks an agent to change your "
+            f"code, that needs a model."
+        ) from exc
+
+    # **The other thing every agent run needs, and it was found the expensive way** (item 191).
+    # `deps --fix` died at the gateway after OSV, four image builds and two suite runs, on the
+    # first real model call this command ever made. Asked here, where the credential is asked.
+    from hullwork.sandbox.net import why_the_gateway_cannot_start
+
+    missing = why_the_gateway_cannot_start()
+    if missing:
+        raise CommandError(missing)
+
+
+def _open_the_ones_that_pass(
+    code_forge: object,
+    checkout: Path,
+    manifest: Manifest,
+    findings: Sequence[osv.Finding],
+    reports: Sequence[bump.Report],
+    out: TextIO,
+) -> None:
+    """Open one draft pull request per verified-green upgrade. Item 178, DR-0018 step 3.
+
+    The end of DR-0018's sentence, and the first thing in this line of work that needs a credential
+    able to write: *we open the thirty-one that pass and tell you what to do with the nine that do
+    not*. The nine are already on screen by the time this runs.
+    """
+    from hullwork import trial
+
+    eligible = upgrades.eligible(reports)
+    if eligible and not manifest.autofix.open_upgrades:
+        # **Said before the count, and as a decision** (DR-0019, item 187). This is the first thing
+        # a project can refuse while Hullwork is perfectly able to do it, so it must not read as a
+        # part that is missing — the verification above ran and its answer stands.
+        print(
+            f"\n{len(eligible)} upgrade(s) passed your suite and **none was opened**: this "
+            f"project has not permitted it.\n"
+            f"  Set `autofix: {{open_upgrades: true}}` in {MANIFEST_FILENAME} if you want them "
+            f"opened. It is false by default because having the credential is not the same as "
+            f"having agreed, and the report above is what there is to act on either way.",
+            file=out,
+        )
+        return
+    if not eligible:
+        print(
+            "\nNothing was verified green, so there is nothing to open. That is a result rather "
+            "than a failure: the report above is what there is to act on.",
+            file=out,
+        )
+        return
+
+    # **The commit the gates ran against**, read from the checkout that was verified rather than
+    # from the forge's idea of its own default branch. The base can move while a verification runs,
+    # and a branch rooted at wherever it points now contains a tree nobody tested.
+    base = trial.head_sha(checkout)
+    if base == "working tree":
+        print(
+            "\nThis checkout is not a git repository, so there is no commit to root a pull "
+            "request at and nothing was opened. What was verified is above.",
+            file=out,
+        )
+        return
+
+    by_package = {f.dependency.name: f.advisories for f in findings}
+    coordinate = _coordinate_from(_origin_url(checkout))
+    print(f"\n--- opening {len(eligible)} verified-green upgrade(s) on {coordinate} ---\n",
+          file=out)
+    opened = upgrades.open_them(
+        code_forge, repo=coordinate, reports=eligible,
+        advisories=by_package, base_sha=base,
+        permitted=manifest.autofix.open_upgrades,
+    )
+    for where in opened:
+        print(f"  {where}", file=out)
+    if len(opened) < len(eligible):
+        # Never silence: a package that produced no pull request is either already open from a
+        # previous run or something the forge refused, and both are facts a reader needs.
+        print(
+            f"\n  {len(eligible) - len(opened)} opened nothing — already open from an earlier "
+            f"run, or refused by the forge. The log says which.",
+            file=out,
+        )
+    print(
+        f"\nAll drafts, rooted at {base[:12]}, one per package. Nobody merges them but you.",
+        file=out,
+    )
+
+
+def _fix_the_ones_that_break(
+    args: argparse.Namespace,
+    settings: Settings,
+    checkout: Path,
+    paths: Sequence[str],
+    manifest: Manifest,
+    findings: Sequence[osv.Finding],
+    reports: Sequence[bump.Report],
+    out: TextIO,
+) -> int:
+    """Hand each broken upgrade to an agent and let the gates decide. Item 179, DR-0018 step 4.
+
+    **The middle of the queue, which is the part nobody else ships.** The verified-green ones need
+    no agent and are item 178's to deliver; the blocked ones have nothing to try. What is left is
+    *six break, tests named*, and until this existed the honest answer to those was a list.
+
+    Worst-first through `bump.ranked`, so a run that is interrupted has spent its money on the ones
+    a person would have started with.
+    """
+    into = Path(args.into).resolve()
+    queue: list[tuple[bump.Report, refit.Upgrade]] = []
+    for report in bump.ranked(reports):
+        if bump.needs_of(report) is not bump.Needs.NEEDS_WORK:
+            continue
+        finding = next(
+            (
+                f for f in findings
+                if f.dependency.name == report.package and f.dependency.version == report.was
+            ),
+            None,
+        )
+        if finding is None:  # pragma: no cover - every report was built from one
+            continue
+        first = finding.advisories[0] if finding.advisories else None
+        upgrade = refit.from_report(
+            report,
+            source=finding.dependency.source,
+            guarded=refit.guarded_for(finding.dependency.source),
+            advisory=first.id if first else "",
+            url=first.url if first else "",
+        )
+        if upgrade is not None:
+            queue.append((report, upgrade))
+
+    if not queue:
+        print(
+            "\nNothing broke that an agent could be asked about, so --fix had nothing to do.",
+            file=out,
+        )
+        return 0
+
+    print(f"\n--- asking an agent to make {len(queue)} upgrade(s) fit ---\n", file=out)
+    failures = 0
+    for _report, upgrade in queue:
+        print(f"  {upgrade.package} {upgrade.was} → {upgrade.to}", file=out)
+        try:
+            outcome = refit.run(
+                settings, checkout, manifest, upgrade,
+                present=paths, into=into, repo=_coordinate_from(_origin_url(checkout)),
+            )
+        except refit.NotUpgradableError as refused:
+            # The upgrade never went into the tree, so no attempt was begun and nothing was spent.
+            # Said as the fact about the project that it is, in the resolver's own words.
+            print(f"      could not be applied: {refused}\n", file=out)
+            failures += 1
+            continue
+        except work.WiringError as broken:
+            # Belt and braces over the refusal above: an engine this build does not know is a
+            # per-project fact, and a queue of six must not end at the first one that has it.
+            print(f"      not attempted: {broken}\n", file=out)
+            failures += 1
+            continue
+        print(f"      {outcome.outcome.value}: {outcome.detail.splitlines()[0]}", file=out)
+        if outcome.pull_request:
+            print(f"      written to {outcome.pull_request}\n", file=out)
+        else:
+            print("", file=out)
+        if outcome.outcome not in (AttemptOutcome.PR_OPEN, AttemptOutcome.PR_OPEN_LINT_FAILED):
+            failures += 1
+
+    print(
+        f"{len(queue) - failures} of {len(queue)} now pass your suite with the upgrade still "
+        f"applied. Nothing was opened anywhere: read what is in {into} and decide.",
+        file=out,
+    )
+    return 0
+
+
+def _cannot_be_verified(
+    dep: dependencies.Dependency, manifest: Manifest, versions: Sequence[str]
+) -> str | None:
+    """Why this upgrade cannot be measured at all, or `None` when it can. Item 182.
+
+    Every reason here is knowable from the manifest and the finding, so all of them are answered
+    **before a container is built** — the same rule `can_rewrite` follows and for the same reason.
+
+    **The one that was missing is the one a real repository found immediately.** `encode/flask` pins
+    four of its five advisory-carrying packages in `examples/celery/requirements.txt`, which is not
+    a file its image installs from. The image is built from `runtime.dependencies`; rewriting
+    anything outside that set changes no byte the build reads, so `dependency_digest` does not move,
+    the image is reused, and the suite passes exactly as it passed before.
+
+    **Measured on 2026-08-09 against a real daemon**, on a tree with `requirements.txt` declared and
+    `extras/requirements.txt` not:
+
+        [ready to take] jinja2 2.4.1 → 2.10.1
+        $ docker run --rm <image> python -c "import jinja2"
+        ModuleNotFoundError: No module named 'jinja2'
+
+    *Ready to take*, for a package **not installed in the environment its suite ran in** — and with
+    item 178's `--open`, a pull request. That is item 174's defect arriving by a second route, and
+    it is the exact artefact DR-0017 says this product exists to prevent.
+
+    An empty `runtime.dependencies` is not this case: `_verify_one` falls back to the file that
+    pins, so the build does read it.
+    """
+    runtime = manifest.runtime
+    assert runtime is not None  # noqa: S101 - `_manifest_for_verify` refused a manifest without one
+
+    if runtime.install == "none":
+        # **The worse half of the same finding, and it is the default value.** With `install: none`
+        # the generated Dockerfile copies no dependency file and runs no installer
+        # (`sandbox/image.py`: `if runtime.install != "none" and runtime.dependencies`), so whatever
+        # the project's environment holds came from `runtime.base` and cannot be moved by editing a
+        # lockfile. DR-0007 makes *the project brings its own image* the primary path, so this is
+        # not an edge case — it is most projects.
+        #
+        # **Measured on 2026-08-09** against a base image carrying `jinja2 3.0.0`, on a checkout
+        # pinning `jinja2==2.4.1`:
+        #
+        #     [ready to take] jinja2 2.4.1 → 2.10.1
+        #     $ docker run --rm <both sandbox images> python -c "import jinja2; print(...)"
+        #     3.0.0
+        #     3.0.0
+        #
+        # Neither version in the claim was ever installed. The "before" run did not use 2.4.1 and
+        # the "after" run did not use 2.10.1; both used a third version, and the verdict said the
+        # suite passed before the change and after it — which was true, and about nothing.
+        return (
+            f"your manifest sets `install: none`, so the image is `{runtime.base}` exactly as it "
+            f"comes and nothing is installed from {dep.source}. Changing a version there cannot "
+            f"change what your suite runs against, so no verdict here would be about this "
+            f"upgrade.\n"
+            f"    This is the primary path in DR-0007 and it is not a defect in your project: an "
+            f"image that already carries your dependencies is upgraded by rebuilding it, not by "
+            f"editing a pin. Declare an installer and the file it reads if you want this measured."
+        )
+
+    if runtime.dependencies and dep.source not in runtime.dependencies:
+        declared = ", ".join(runtime.dependencies)
+        return (
+            f"{dep.source} is not one of the files your image is built from ({declared}), so "
+            f"changing a version in it changes nothing the suite would run against. Whatever this "
+            f"upgrade does, your suite cannot say — and a green run here would mean only that the "
+            f"file nobody installs from was edited.\n"
+            f"    Declare it in `runtime.dependencies` if your build should read it, or upgrade it "
+            f"by hand: this is a fact about what your image installs, not about the upgrade."
+        )
+
+    if not versions:
+        # Not "no fix found": the advisory publishes none, which is a fact about the advisory rather
+        # than a gap in this reading.
+        return "no published fixed version, so there is nothing to try"
+
+    try:
+        bump.can_rewrite(dep.source)
+    except bump.CannotRewriteError as refused:
+        return str(refused)
+    return None
+
+
+def _print_the_queue(reports: Sequence[bump.Report], out: TextIO) -> None:
+    """The ranked report. DR-0018 step 2, and the whole of what it is for.
+
+    **This is the part Renovate cannot produce.** Its documented weakness is that it hands over
+    every update undecided — noise rather than signal — and ranking them requires knowing what each
+    one does, which requires running them. Everything above ran them; this is where that is spent.
+    """
+    if not reports:
+        return
+    counted = bump.summary(reports)
+    print("\n=== what to do with them ===\n", file=out)
+    for needs in (
+        bump.Needs.FIX_YOUR_SUITE, bump.Needs.NEEDS_WORK,
+        bump.Needs.BLOCKED, bump.Needs.JUST_TAKE_IT,
+    ):
+        # Every bucket, including the empty ones: a reader has to be able to tell "none of these"
+        # from "this was not counted", and only one of those is good news.
+        print(f"  {counted[needs]:>3}  {needs.value}", file=out)
+
+    print("", file=out)
+    for report in bump.ranked(reports):
+        needs = bump.needs_of(report)
+        settled = report.settled
+        where = f" → {settled.to}" if settled is not None else ""
+        broke = bump.broke(report)
+        cost = f", {broke} test(s) to fix" if broke and settled is None else ""
+        print(f"  [{needs.value}] {report.package} {report.was}{where}{cost}", file=out)
+    print("", file=out)
+
+
+def _verify_one(
+    checkout: Path,
+    paths: Sequence[str],
+    read: Callable[[str], str | None],
+    manifest: Manifest,
+    dep: dependencies.Dependency,
+    versions: list[str],
+    out: TextIO,
+) -> bump.Report | None:
+    """One package, every candidate, each in its own sandbox."""
+    from hullwork import trial
+    from hullwork.sandbox import image as image_module
+    from hullwork.sandbox.run import Sandbox
+
+    runtime = manifest.runtime
+    assert runtime is not None  # noqa: S101 - refused above, and mypy cannot see that
+    tests = manifest.tests or ""
+    source = dep.source
+
+    # Which candidate `verify` is on, so a resolver-backed mover knows what to ask for.
+    _pending: dict[str, str] = {"version": ""}
+
+    with ExitStack() as stack:
+        worktree = dispatch_module.prepare_worktree(checkout)
+        stack.callback(shutil.rmtree, worktree, ignore_errors=True)
+
+        def files_now() -> dict[str, bytes]:
+            """The declared dependency files as they are in the worktree right now.
+
+            Read per build rather than once: the rewrite happens between the two, and the second
+            build has to see it — `image.dependency_digest` then makes the tag differ by itself,
+            which is what turns the second build into a real rebuild.
+            """
+            found: dict[str, bytes] = {}
+            for path in runtime.dependencies or [source]:
+                whole = worktree / path
+                if whole.exists():
+                    found[path] = whole.read_bytes()
+            return found
+
+        built: dict[str, str] = {}
+        # **The commit the source is at, when the source goes into the build at all** (item 182).
+        # Read once: it is what `image_tag` hashes to decide whether an image can be reused, and the
+        # source does not move between candidates — only the dependency files do, and those are
+        # hashed separately by `dependency_digest`.
+        source_ref = trial.head_sha(checkout) if runtime.install_needs_source else None
+
+        def build_now() -> str | None:
+            try:
+                image = image_module.build(
+                    runtime, files_now(), None,
+                    # **Item 113's fix, which this path never inherited** (found by item 182, on
+                    # the first third-party tree it was pointed at). The build context holds the
+                    # declared dependency files and never the source, and three ordinary installers
+                    # read the source anyway: a `requirements.txt` beginning `-e .`, a `Gemfile`
+                    # that says `gemspec`, and `mvn test`. Measured on `encode/httpx`, whose first
+                    # requirement is `-e .[brotli,cli,http2,socks,zstd]`:
+                    #
+                    #   ERROR: file:///work does not appear to be a Python project:
+                    #          neither 'setup.py' nor 'pyproject.toml' found.
+                    #
+                    # Reported as *your own environment does not build*, which was true of what we
+                    # built and false of the project. Ruby, Java and PHP are on the roadmap as
+                    # stacks whose attempts work; every one of them reaches this the same way.
+                    source=worktree if runtime.install_needs_source else None,
+                    source_ref=source_ref,
+                )
+            except image_module.ImageBuildError as failed:
+                return str(failed)
+            built["tag"] = image.tag
+            return None
+
+        # The baseline image, before anything is rewritten. A failure here is the project's
+        # environment, not the upgrade's, so it is said as that.
+        problem = build_now()
+        if problem is not None:
+            print(f"  {dep.name}: your own environment does not build — {problem}\n", file=out)
+            return None
+
+        made = {"n": 0}
+
+        def make_box(_version: str) -> bump.Box:
+            """A box on **whatever image `built` holds right now**.
+
+            Called once per run rather than once per candidate, because the second run has to
+            happen on the rebuilt image — reusing the first box measures the upgraded project's
+            suite against the environment it replaced, and reports `clean` for a version that was
+            never installed. Found by a real Docker run; see item 174.
+            """
+            made["n"] += 1
+            # Built from the worktree **as it is now**, which is what makes each run happen in the
+            # environment its own tree describes. Cheap when nothing changed: the digest is the
+            # content, so `build` reuses the existing image rather than making another.
+            build_now()
+            box = Sandbox(image=built["tag"], worktree=worktree)
+            stack.callback(box.cleanup)
+            box.ensure_volume(
+                f"hullwork-deps-{os.getpid()}-{made['n']}",
+                # **Item 114's fix, which this path never inherited either** (item 182). Anything
+                # the build installed under `/work` is erased by the worktree volume unless the
+                # image goes down first — which is what `vendor/` is for PHP, and the reason that
+                # item exists. Off unless the project asks, so every other project takes the path
+                # it took yesterday.
+                seed_from_image=runtime.install_needs_source,
+            )
+            return box  # type: ignore[return-value]
+
+        # How this file is moved, and everything moving it can touch (items 175 and 176). For a
+        # list the line is the pin; for a resolved graph only the ecosystem's own tool may move it,
+        # and `touches` is what stops one candidate leaving a widened range behind for the next.
+        resolver = resolve.resolver_for(source)
+        mover = None
+        guarded: tuple[str, ...] = (source,)
+        if resolver is not None:
+            guarded = resolve.touches(resolver)
+            here = [p for p in paths if p.rsplit("/", 1)[-1] in set(resolver.needs)]
+
+            def mover(worktree: Path, _r: resolve.Resolver = resolver) -> str | None:
+                outcome = resolve.upgrade(
+                    resolver=_r, worktree=worktree, package=dep.name, version=_pending["version"],
+                    present=here, run=resolve.in_a_container,
+                )
+                return None if outcome.ok else f"{outcome.outcome.value}: {outcome.detail}"
+
+        report = bump.verify(
+            tests=tests, source=source, package=dep.name,
+            was=dep.version, versions=versions,
+            make_box=make_box, rebuild=lambda _text: build_now(),
+            mover=mover, touches=guarded, pending=_pending,
+        )
+
+    for answer in report.answers:
+        print(f"  {answer.says}", file=out)
+        if answer.detail:
+            for line in answer.detail.splitlines()[:8]:
+                print(f"      {line}", file=out)
+    print("", file=out)
+    return report
+
+
+def _cmd_features(args: argparse.Namespace, settings: Settings, out: TextIO) -> int:
+    """What this can do for your project, and what it cannot. Item 186.
+
+    **The same rules as `projects lanes --checkout .`**, which is the precedent this copies: a
+    checkout, no credential of any kind, nothing executed, nothing written and no socket opened. It
+    answers before you have decided anything, which is the only moment the answer is worth having.
+
+    Settings are read for **which variables are set and never for their values**, so this can say
+    *needs a model credential, and none is configured* while holding none — and can be run by
+    somebody who has configured nothing at all.
+    """
+    checkout = Path(args.checkout).resolve()
+
+    manifest = None
+    manifest_path = checkout / MANIFEST_FILENAME
+    if manifest_path.exists():
+        try:
+            manifest = parse_manifest(manifest_path.read_text(encoding="utf-8"),
+                                      source=str(manifest_path))
+        except ManifestError as broken:
+            # Said and carried on. A manifest that does not parse is a fact about this checkout and
+            # answers half the questions below by itself; refusing here would withhold the other
+            # half over a file the reader is about to fix anyway.
+            print(f"{manifest_path} does not parse, so everything it would answer reads as no:\n"
+                  f"  {broken}\n", file=out)
+
+    known = features.Checkout(
+        paths=tuple(_tracked_files(checkout)),
+        manifest=manifest,
+        configured=frozenset(
+            name
+            for name, present in (
+                (features.MODEL_KEY, settings.model_key is not None),
+                (features.CODE_TOKEN, settings.forge_code_token is not None),
+                ("origin", _origin_url(checkout) is not None),
+            )
+            if present
+        ),
+    )
+
+    print(f"What Hullwork can do for {checkout.name}, and what it cannot.\n", file=out)
+    answers = features.examine(known)
+    for line in features.lines(answers):
+        print(line, file=out)
+
+    print(
+        "Every limit above is true whether or not the feature is available — that is what a limit "
+        "is. Nothing here ran, opened a socket or needed a credential.",
+        file=out,
+    )
+    if features.INSTANCE_SHAPED:
+        print(
+            "\nAnswered by `hullwork doctor` on the instance rather than here, because a checkout "
+            "cannot know them: " + ", ".join(features.INSTANCE_SHAPED) + ".",
+            file=out,
+        )
+    return 0
+
+
 def _propose_entry(args: argparse.Namespace, settings: Settings, out: TextIO) -> int:
     """Standalone with a checkout, database-backed with a repo — same shape as `lanes`.
 
@@ -366,8 +1110,45 @@ def _propose_entry(args: argparse.Namespace, settings: Settings, out: TextIO) ->
         return _cmd_propose(args, session, settings, out)
 
 
-def _coordinate_of(checkout: Path) -> str:
-    """`owner/name` for a local checkout, from its `origin` remote, or a visible placeholder.
+def _tracked_files(checkout: Path) -> list[str]:
+    """The checkout's tracked files, which is what a forge would serve.
+
+    **Tracked rather than walked**, and the reason is the same for both callers: a walk reads
+    `.venv/` and `node_modules/`, so a proposal would come from a cache and a dependency report
+    would be about somebody else's dependencies.
+    """
+    listed = subprocess.run(  # noqa: S603
+        ["git", "-C", str(checkout), "ls-files"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        raise CommandError(
+            f"could not list the files in {checkout}: it is not a git checkout, and this reads "
+            f"tracked files so what it reports matches what a forge would serve.\n"
+            f"  {listed.stderr.strip()}"
+        )
+    return [line for line in listed.stdout.splitlines() if line]
+
+
+def _origin_url(checkout: Path) -> str | None:
+    """The `origin` remote's URL, or `None` when there is not one to have.
+
+    One call, two readers: the coordinate below and the forge that holds it (item 171). Asking
+    git twice for the same string would let the two answers disagree about the same repository.
+    """
+    url = subprocess.run(  # noqa: S603
+        ["git", "-C", str(checkout), "remote", "get-url", "origin"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return url.stdout.strip() if url.returncode == 0 else None
+
+
+def _coordinate_from(url: str | None) -> str:
+    """`owner/name` out of a remote URL, or a visible placeholder.
 
     A manifest's `git.repo` is validated as `owner/name` (`manifest.py`), so the directory's own
     name would produce a proposal that cannot parse — the one thing a proposal must never do, since
@@ -377,14 +1158,8 @@ def _coordinate_of(checkout: Path) -> str:
     loudly and reads as something to replace, which is the same choice as `REPLACE-ME` for
     `group_add`. A plausible-looking wrong value would be committed.
     """
-    url = subprocess.run(  # noqa: S603
-        ["git", "-C", str(checkout), "remote", "get-url", "origin"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if url.returncode == 0:
-        trimmed = url.stdout.strip().removesuffix(".git")
+    if url:
+        trimmed = url.removesuffix(".git")
         # `git@host:owner/name` and `https://host/owner/name` both end in the two segments wanted,
         # and anything else falls through to the placeholder rather than being guessed at.
         parts = trimmed.replace(":", "/").rstrip("/").split("/")
@@ -410,19 +1185,7 @@ def propose_from_local_ci(checkout: Path) -> str | None:
     `the_recipe_its_toolchain_needs` takes a reader, so neither knows where each came from. Tracked
     files only, to match what a forge serves — a walk would read `.venv/` and propose from a cache.
     """
-    listed = subprocess.run(  # noqa: S603
-        ["git", "-C", str(checkout), "ls-files"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if listed.returncode != 0:
-        raise CommandError(
-            f"could not list the files in {checkout}: it is not a git checkout, and this reads "
-            f"tracked files so the proposal matches what a forge would serve.\n"
-            f"  {listed.stderr.strip()}"
-        )
-    paths = [line for line in listed.stdout.splitlines() if line]
+    paths = _tracked_files(checkout)
 
     def read(path: str) -> str | None:
         try:
@@ -430,11 +1193,15 @@ def propose_from_local_ci(checkout: Path) -> str | None:
         except OSError:
             return None
 
+    origin = _origin_url(checkout)
     for candidate in propose.find(paths):
         text = read(candidate)
         if text is None:
             continue
-        proposal = propose.read(_coordinate_of(checkout), candidate, text)
+        proposal = propose.read(_coordinate_from(origin), candidate, text)
+        # Which forge holds this, when the host says so (item 171). Set here rather than passed
+        # into `read`, which parses CI text and has no business knowing about remotes.
+        proposal.remote_host = propose.host_of_remote(origin)
         if proposal.found_anything:
             checked = propose.only_files_that_exist(proposal, paths)
             return propose.render(
@@ -1348,6 +2115,10 @@ def _cmd_status(
         }
         json_merged, json_holding, json_recurred = recurrence.counted(session)
         payload["attempts"] = outcomes.funnel(session).as_dict()
+        # Item 183: the parts, so an operator computes their own ratio. Never a percentage here
+        # either — six samples do not carry that precision, and a number this product publishes
+        # about itself is the one place that matters most.
+        payload["desk"] = outcomes.desk(session).as_dict()
         spent = spend.per_instance(
             session.query(Attempt).all(), spend.Prices.from_settings(settings)
         )
@@ -1440,6 +2211,17 @@ def _cmd_status(
             + (f"   cannot be decided: {cannot}" if cannot else ""),
             file=out,
         )
+
+    # **First, because DR-0017 signed for it** (item 183). Everything below this block has
+    # *attempts* as its denominator and therefore answers *of the attempts we made, how did they
+    # go*. This one has **what arrived** as its denominator, which is the question the accepted
+    # decision says the product is measured by — and it is above the others because a reader who
+    # stops after one block should have read the one that can embarrass us.
+    desk_said = outcomes.desk_lines(outcomes.desk(session))
+    if desk_said:
+        print("\n  The desk:", file=out)
+        for line in desk_said:
+            print(f"    - {line}", file=out)
 
     # Item 119, and the same question as the line above at a different distance: that one is about
     # fixes that landed, this one about what became of every attempt that was made. Counts, never a
@@ -2809,6 +3591,86 @@ def build_parser() -> argparse.ArgumentParser:
     )
     proposing.add_argument("--forge", default="forgejo", choices=SUPPORTED_FORGES)
     proposing.set_defaults(standalone=_propose_entry)
+
+    depending = subparsers.add_parser(
+        "deps",
+        help="which pinned dependencies have a published vulnerability",
+        description=(
+            "Reads the lock files a checkout carries, asks OSV what is published against those "
+            "exact versions, and prints what came back with the version that ends each one.\n\n"
+            "Needs no credential of any kind: no forge, no model, no Docker, no database. The one "
+            "host it contacts is OSV's public API, which takes no key and no account. Lock files "
+            "rather than declarations, because a declaration is a range and a range does not say "
+            "what your build resolved to.\n\n"
+            "It proposes nothing and changes nothing. Whether an upgrade survives your own test "
+            "suite is a separate question, and answering it is what the sandbox is for.\n\n"
+            "Your checkout is never written to, by any of these flags: `--verify` and `--fix` work "
+            "in a copy, and what `--fix` produces is written where you point `--into` — for you to "
+            "read. Nothing is opened on any forge."
+        ),
+    )
+    depending.add_argument(
+        "--checkout", default=".", help="the checkout to read (default: the current directory)"
+    )
+    depending.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "take each published fix, apply it, and run your own test suite against it in a "
+            "sandbox — reporting whether the upgrade holds, breaks your suite (naming the tests) "
+            "or will not install. Needs a hullwork.yml and the Docker daemon; the report without "
+            "this flag needs neither. No model credential either way: there is no agent in this "
+            "path."
+        ),
+    )
+    depending.add_argument(
+        "--fix",
+        action="store_true",
+        help=(
+            "for the upgrades that break your suite, ask an agent to change your code so they fit "
+            "— then run your suite again with the upgrade still applied, and check the version is "
+            "still pinned afterwards. Implies --verify. This is the only part of `deps` that calls "
+            "a model, so it needs a model credential; it still needs no forge and opens nothing, "
+            "and what it produced is written to --into for you to read."
+        ),
+    )
+    depending.add_argument(
+        "--open",
+        action="store_true",
+        help=(
+            "open a draft pull request for every upgrade that passed your suite — one per package, "
+            "never a batch, rooted at the commit the runs were made against. Implies --verify. "
+            "This is the only flag here that writes to your repository, and it needs "
+            "HULLWORK_FORGE_URL and HULLWORK_FORGE_CODE_TOKEN. Nothing that broke, nothing that "
+            "was blocked, and nothing whose baseline was red is ever opened."
+        ),
+    )
+    depending.add_argument(
+        "--into",
+        default="hullwork-refits",
+        help="where to write what the fix attempts produced (default: ./hullwork-refits)",
+    )
+    depending.set_defaults(standalone=_cmd_deps)
+
+    featuring = subparsers.add_parser(
+        "features",
+        help="what Hullwork can do for this project, and what it cannot",
+        description=(
+            "Reads your checkout and your hullwork.yml and says, feature by feature, whether this "
+            "instance can do it for you — and when it cannot, which requirement is missing and "
+            "what to do about it.\n\n"
+            "Needs no credential of any kind. It runs nothing, opens no socket, starts no "
+            "container and writes nothing: it is a reading of what you already have, meant to be "
+            "run before you have decided anything.\n\n"
+            "Every feature also carries what it cannot do **even when it is available**, because a "
+            "limit you meet after adopting something is a limit you found the expensive way. "
+            "Variables are read for whether they are set, never for their values."
+        ),
+    )
+    featuring.add_argument(
+        "--checkout", default=".", help="the checkout to read (default: the current directory)"
+    )
+    featuring.set_defaults(standalone=_cmd_features)
 
     laning = actions.add_parser(
         "lanes",

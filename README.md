@@ -1,5 +1,6 @@
-![Hullwork — from production errors to reviewable draft pull requests. Self-hosted, with your forge,
-your error tracker, your model endpoint and a human gate on every merge.](images/banner.svg)
+![Hullwork — verifies which of your tools' claims are actually true, before a person is asked.
+Self-hosted, with your forge, your error tracker, your model endpoint and a human gate on every
+merge.](images/banner.svg)
 
 [![CI](https://github.com/easybytehub/hullwork/actions/workflows/ci.yml/badge.svg)](https://github.com/easybytehub/hullwork/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/easybytehub/hullwork?include_prereleases&label=release&color=blue)](https://github.com/easybytehub/hullwork/releases)
@@ -7,9 +8,13 @@ your error tracker, your model endpoint and a human gate on every merge.](images
 [![Python](https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white)](pyproject.toml)
 [![Licence: FSL-1.1-ALv2](https://img.shields.io/badge/licence-FSL--1.1--ALv2-blue)](LICENSE.md)
 
-**Pre-alpha.** Both halves run end to end, five attempts have reached a draft pull request, and nobody
-outside this project has installed it. What works, what does not, and what nobody has demonstrated are
-all in **[docs/status.md](docs/status.md)** — read that before relying on any of this.
+**Hullwork verifies which of the things your tools claim are actually true, before a person is
+asked** — errors, dependencies, incidents. What that means, and everything that follows from it, is
+**[what Hullwork is](docs/what-hullwork-is.md)**.
+
+**Pre-alpha.** The error signal runs end to end, five attempts have reached a draft pull request, and
+nobody outside this project has installed it. What works, what does not, and what nobody has
+demonstrated are all in **[docs/status.md](docs/status.md)** — read that before relying on any of this.
 
 > **What this repository is.** All of Hullwork, under a source-available licence that becomes
 > Apache-2.0 two years after each release: the whole loop, uncapped, for as many projects as you like.
@@ -34,6 +39,28 @@ all in **[docs/status.md](docs/status.md)** — read that before relying on any 
 - [Licence](#licence)
 
 ## What it does
+
+Every signal it accepts arrives from a tool that **asserts something and proves nothing**. A tracker
+says *something broke*. An advisory says *this version is vulnerable*. A scanner says *this could be
+exploited*. None of them ran anything.
+
+So Hullwork takes the claim into a sandbox, submits it to an oracle **it cannot influence**, and
+returns a verdict with the run attached. The oracle changes per signal; the machine does not.
+
+| what arrives | what it really says | what settles it here |
+|---|---|---|
+| a production error | *something broke* | a test that fails before the change and passes after |
+| a dependency advisory | *this version is vulnerable* | your own suite, run against the upgrade |
+| a static finding | *this could be exploited* | a test naming the hostile input |
+
+**Only the first row is in a release.** The second is built and unreleased — it is in no image you
+can pull, and this page will say so until it is. The third does not exist.
+
+**"I could not verify this" is a first-class answer**, and on this repository's own numbers — 160
+code scanning alerts, five real — it is the answer about nine times in ten. Delivering it honestly
+is worth more than a fix, because nobody else delivers it at all.
+
+### The path the error signal takes
 
 ![Two things arrive — a production error by webhook, and a human report through a normaliser. Hullwork
 triages, deduplicates and assigns a risk lane. Green items are attempted unattended, amber wait for your
@@ -146,7 +173,7 @@ instance has ever run it, which is not support.
 | | | |
 |---|---|---|
 | **Forges** | ✅ Forgejo · ✅ Gitea · ✅ GitHub | ⚠️ GitLab — the adapter is written, no instance has run it |
-| **Error trackers** | ✅ GlitchTip, and anything posting a Sentry-compatible payload | ⚠️ Sentry's signed webhooks — the route is written and switched off, because verifying an HMAC means storing a secret reversibly and that decision has not been made |
+| **Error trackers** | ✅ GlitchTip, and anything posting a Sentry-compatible payload | ⚠️ Sentry's own route is built and **not in a release yet**; when it lands it is authenticated by the token in the URL and its signature is not verified — which is what GlitchTip offers at all. [`SECURITY.md`](SECURITY.md) says what that does not cover |
 | **Model endpoints** | ✅ anything speaking the Anthropic or OpenAI protocol family — Anthropic and OpenRouter both exercised | Your key, your endpoint. No provider is integrated and none is privileged |
 | **Agents** | ✅ `claude-code`, exercised | Any container that takes a worktree and returns changed files qualifies: the agent is a contract, not an integration |
 | **Your stack** | ✅ any Linux image with a shell, on this instance's architecture — you name the image your CI already uses | ❌ `distroless` and `scratch`, refused at registration rather than at attempt time |

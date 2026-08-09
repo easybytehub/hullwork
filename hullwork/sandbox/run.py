@@ -130,8 +130,8 @@ GIT_DIR = ".git"
 
 #: Refused **on purpose**, which is a different thing from the accident above. A workflow file is
 #: code that runs on the forge's runner with the repository's secrets — outside the sandbox, with
-#: privileges the agent does not have and must not be able to grant itself. Changing CI is already
-#: an amber decision for a human in the worker contract; here it is simply not on the table.
+#: privileges the agent does not have and must not be able to grant itself. The derived lane policy
+#: already keeps a human on CI definitions (`territory.py`); here it is simply not on the table.
 FORBIDDEN_DIRS = frozenset({GIT_DIR, ".github", ".forgejo", ".gitea"})
 
 #: Things a toolchain writes by itself, which are **not** the agent's work and must never be
@@ -771,6 +771,40 @@ def is_test_infrastructure(relative: str) -> bool:
     if any(part in TEST_DIRS for part in parts[:-1]):
         return True
     return bool(_TEST_FILE.match(parts[-1]))
+
+
+def created_test_config(worktree: Path, before: dict[str, bytes]) -> list[str]:
+    """Test configuration a phase **created** where the checkout had none. Item 179.
+
+    **The hole in item 046's guard, found by writing this item's tests and confirmed against the
+    existing sequence.** `_restore_infrastructure` iterates the before-image, so it restores
+    configuration that was *edited* and never sees configuration that was *invented*: a fix phase
+    that writes a root `conftest.py` where a project had none switches the suite off, is not
+    restored, produces an empty `restored` — so no second gate runs — and publishes as `pr-open`
+    with the mechanism inside its own diff. Measured against `dispatch.dispatch` before this
+    existed, on a `conftest.py` carrying `collect_ignore_glob = ['*']` and no fix at all.
+
+    Twenty-one tests in `test_dispatch` did not cover it, and they could not have: every one of
+    them expresses tampering as an *edit*, which is how item 046 was written and therefore how it
+    was tested.
+
+    **Only configuration, never a new test.** `is_test_infrastructure` is deliberately not the
+    predicate here: it also matches new files under `tests/`, and a fix that adds a test is welcome
+    — that distinction is the whole reason the original guard iterated the snapshot. What is refused
+    is a *new* file whose only job is to decide whether the suite runs at all, and there is no
+    legitimate version of that arriving from a fix phase: the sandbox has no network, so a
+    dependency such a file could configure cannot be installed anyway.
+    """
+    found: list[str] = []
+    for path in sorted(worktree.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        relative = path.relative_to(worktree).as_posix()
+        if _forbidden(relative) or relative in before:
+            continue
+        if relative.split("/")[-1] in TEST_CONFIG_FILES:
+            found.append(relative)
+    return found
 
 
 @dataclass(frozen=True)

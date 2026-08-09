@@ -627,9 +627,9 @@ class ForgeCode(Protocol):
         head with an empty commit — so "the agent changed nothing" would otherwise become a branch
         and a pull request with no diff in it.
 
-        No sign-off trailer, ever, though the API adds one. CONTRIBUTING.md and the worker contract
-        both say the DCO sign-off is a human act performed at the merge gate; that a machine *can*
-        emit the trailer is exactly why it must not.
+        No sign-off trailer, ever, though the API adds one. CONTRIBUTING.md says the DCO
+        sign-off is a human act performed at the merge gate; that a machine *can* emit the
+        trailer is exactly why it must not.
         """
         ...
 

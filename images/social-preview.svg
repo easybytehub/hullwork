@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640"
+     role="img" aria-labelledby="t d">
+  <title id="t">Hullwork — verifies which of your tools' claims are actually true</title>
+  <desc id="d">The Hullwork wordmark above the claim: it verifies which of your tools' claims are
+    actually true, before a person is asked — errors, dependencies, incidents. Below, the three
+    counts from one real attempt: the suite untouched, 904 passed; the new test with no fix, 2
+    failed, exit 1, the required outcome; the fix applied, 906 passed. Along the bottom: self-hosted,
+    your forge, your error tracker, your model endpoint, a human gate on every merge — and the
+    project's state, pre-alpha, under FSL-1.1-ALv2.</desc>
+
+  <!-- **The source for `social-preview.png`, which until item 181 had none.**
+       That PNG is what a link to this repository renders as, anywhere it is pasted, and it carried
+       the old positioning in 56px type — the highest-leverage sentence in the project, and the last
+       one to be corrected. It had no source in the repository, so "regenerate it" meant "find
+       whatever produced it", which is the condition this file removes.
+
+       Same rules as `banner.svg`: no gradient, no illustration, no hero art. What sits under the
+       claim is a **reading** — three real counts from one real attempt — and not a slogan, because
+       this product's whole position is that its evidence is checkable, so the front of it should
+       look like an instrument.
+
+       Rendered with `scripts/render-social-preview.sh`. -->
+  <style>
+    .bg    { fill: #fcfcfd; }
+    .mark  { fill: #15171c; }
+    .ink   { fill: #15171c; }
+    .muted { fill: #5d6470; }
+    .faint { fill: #868d99; }
+    .ok    { fill: #12693a; }
+    .bad   { fill: #a32f26; }
+    .rule  { stroke: #e2e5ea; stroke-width: 1.25; fill: none; }
+    text   { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .mono  { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  </style>
+
+  <!-- **No dark-mode media query here, unlike the banner**, and it is not an oversight: this file
+       is rasterised once and uploaded to a forge's settings, so there is no viewer to adapt to. One
+       palette, the light one, because that is what the raster will be for ever. -->
+  <rect class="bg" width="1280" height="640"/>
+
+  <!-- The mark: two quadrants of one square, diagonally opposed, sharing no edge. U+259A, and the
+       product's own shape — two programs, disjoint credentials, no call between them. -->
+  <g class="mark" transform="translate(76, 62)">
+    <rect x="0" y="0" width="15" height="15" rx="1.5"/>
+    <rect x="18" y="18" width="15" height="15" rx="1.5"/>
+  </g>
+  <text class="ink mono" x="122" y="90" font-size="31" font-weight="600" letter-spacing="-0.02em">hullwork</text>
+
+  <text class="ink" x="76" y="212" font-size="56" font-weight="700" letter-spacing="-0.015em">Verifies which of your tools&#8217;</text>
+  <text class="ink" x="76" y="278" font-size="56" font-weight="700" letter-spacing="-0.015em">claims are actually true.</text>
+  <text class="muted" x="76" y="330" font-size="24">Before a person is asked — errors, dependencies, incidents.</text>
+
+  <line class="rule" x1="76" y1="392" x2="1204" y2="392"/>
+
+  <!-- A reading rather than a slogan: the three counts from the attempt written up in
+       docs/an-attempt-end-to-end.md, which is a document anybody can check against the code. -->
+  <g>
+    <text class="faint" x="76" y="434" font-size="18">the suite, untouched</text>
+    <text class="ink mono" x="76" y="482" font-size="34">904 passed</text>
+    <text class="faint" x="76" y="518" font-size="17">green, so an attempt may start</text>
+
+    <line class="rule" x1="462" y1="392" x2="462" y2="530"/>
+    <text class="faint" x="502" y="434" font-size="18">the new test, no fix</text>
+    <text class="bad mono" x="502" y="482" font-size="34">2 failed</text>
+    <text class="faint" x="502" y="518" font-size="17">exit 1 — the required outcome</text>
+
+    <line class="rule" x1="848" y1="392" x2="848" y2="530"/>
+    <text class="faint" x="888" y="434" font-size="18">the fix applied</text>
+    <text class="ok mono" x="888" y="482" font-size="34">906 passed</text>
+    <text class="faint" x="888" y="518" font-size="17">and the 904 still pass</text>
+  </g>
+
+  <line class="rule" x1="76" y1="562" x2="1204" y2="562"/>
+  <text class="muted" x="76" y="596" font-size="19">Self-hosted. Your forge, your error tracker, your model endpoint.</text>
+  <text class="muted" x="76" y="620" font-size="19">A human gate on every merge.</text>
+  <text class="faint mono" x="1204" y="596" font-size="18" text-anchor="end">pre-alpha &#183; FSL-1.1-ALv2</text>
+</svg>

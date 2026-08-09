@@ -91,10 +91,22 @@ class Settings(BaseSettings):
     #: resolving it quietly.
     forge_kind: str | None = None
 
-    # The credential an agent pushes through, kept apart from the one above on purpose. The
-    # ingest token is held by the request path and the sweep — it is in memory whenever the
-    # service is up — so it must never be able to write code. Unset until M2; there is no
-    # fallback to `forge_token`, because a convenient fallback is how a boundary is lost.
+    # The credential Hullwork pushes **verified work** through, kept apart from the one above on
+    # purpose. The ingest token is held by the request path and the sweep — it is in memory
+    # whenever the service is up — so it must never be able to write code. There is no fallback to
+    # `forge_token`, because a convenient fallback is how a boundary is lost.
+    #
+    # **This used to say "the credential an agent pushes through", and item 178 made that false.**
+    # `hullwork deps --open` opens a pull request for an upgrade that passed the project's own
+    # suite, with **no agent having run** — no model, no gateway, no brief. Reusing this token was
+    # the operator's decision on 2026-08-09, over a third one of its own, and the argument is that
+    # a third token would need exactly the same scope (`write:repository`): an audit boundary
+    # rather than a capability boundary, which is not what the split above is. That one is real and
+    # was measured (item 073, and `credentials.py` records how).
+    #
+    # What the rewrite costs, said plainly so nothing goes on relying on it: **nobody may infer
+    # that a model was called from the fact that something was pushed.** Two paths hold this token
+    # now — an agent's fix and a verified upgrade — and only the attempt trail can tell them apart.
     forge_code_token: SecretStr | None = None
 
     # The error tracker's READ api (item 036). Optional: without it Hullwork behaves exactly as it

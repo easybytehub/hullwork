@@ -1,8 +1,8 @@
 # Hullwork, watched by Hullwork.
 #
 # The lanes below are matched against the *error* — its title and culprit — not against the parts
-# of the repository a work item would touch. Those are two different questions, and the worker contract
-# answers the other one: what an unattended worker may change. This file answers what an incoming
+# of the repository a fix would touch. Those are two different questions: the derived path policy
+# (`hullwork projects lanes`) answers the second one. This file answers what an incoming
 # production fault is allowed to become.
 #
 # Red wins over amber, amber over green, and anything matching nothing at all is red.
@@ -36,7 +36,7 @@ autofix:
       - indexerror
     amber:
       # Anything about the shape of the database or what is installed: recoverable, but a fix is a
-      # migration or a dependency change, which the worker contract already keeps away from a worker.
+      # migration or a dependency change, which the derived path policy already keeps a human on.
       - alembic
       - migration
       - integrityerror

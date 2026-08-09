@@ -573,3 +573,48 @@ def _quietly(docker: str, argv: list[str]) -> None:
         run_docker([docker, *argv], timeout=DOCKER_TIMEOUT_SECONDS)
     except SandboxError as exc:  # docker missing, or not answering
         log.warning("could not tear down", extra={"argv": argv, "error": str(exc)})
+
+
+def why_the_gateway_cannot_start(*, docker: str = "docker") -> str | None:
+    """The sentence that refuses an agent run before anything is paid for, or `None`. Item 191.
+
+    **Shaped after `image.why_it_cannot_host_a_phase`, and here for the same reason it exists
+    there**: two doors needed a refusal and only the expensive one had it. Every agent path starts a
+    gateway — `work`, `try` and `deps --fix` — so a missing image is a fact about the instance and
+    not about the command that happened to notice.
+
+    Measured on 2026-08-09, running `deps --fix` against a real model for the first time. It died
+    with `could not start the gateway / Unable to find image 'hullwork:dev' locally` **after** OSV,
+    four image builds and two suite runs. Item 048's finding and item 184's, a third time: the
+    refusal existed and happened in the most expensive place available.
+
+    **A daemon that cannot be reached is a different answer**, and answering it here would be
+    guessing at somebody else's problem: `doctor` owns that question and says it properly. This one
+    answers only *is the image there*, and says nothing at all when the client is absent.
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which(docker) is None:
+        # Not this function's question. `doctor` reports a missing or unreachable daemon, with the
+        # three things it can mean; a second opinion here would be a worse copy of it.
+        return None
+
+    found = subprocess.run(  # noqa: S603
+        [docker, "image", "inspect", GATEWAY_IMAGE],
+        capture_output=True,
+        timeout=DOCKER_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if found.returncode == 0:
+        return None
+    return (
+        f"the gateway image `{GATEWAY_IMAGE}` is not on this Docker daemon, and every agent run "
+        f"needs one.\n"
+        f"  The gateway is where your model credential lives, so that the sandbox running the "
+        f"project's own code never holds it (DR-0004). It runs Hullwork's own image because it is "
+        f"Hullwork's own code.\n"
+        f"  Build it from a checkout:  docker build --tag {GATEWAY_IMAGE} .\n"
+        f"  `docker compose build` does **not** make it: the compose file pins a published image "
+        f"and has no build stage."
+    )

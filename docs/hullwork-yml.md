@@ -258,6 +258,29 @@ incomplete. That ordering is what makes this a translation rather than a treadmi
 that describe an environment are about three and language-neutral, while ecosystems are about fifty
 and keep arriving.
 
+**And they compose, which is easy to miss and worth a paragraph.** *Bring your own image* and
+*name an installer* read as a choice, and they are not one. `base` takes any image; `install` takes
+**your own command** rather than only a name from the recipe list. So a third shape has always been
+legal:
+
+```yaml
+runtime:
+  base: ghcr.io/acme/ci-base:2026.7          # yours, unchanged
+  install: "pip install -r requirements.txt"  # your line, not a recipe of ours
+  dependencies: [requirements.txt]            # the file your versions are pinned in
+```
+
+That is **one layer on top of the image you named**, not a rebuild from scratch — and it is what
+makes a dependency upgrade measurable: an upgrade can only be checked against a suite that actually
+runs it, which means the image has to be refreshed from the file that pins. With `install: none`
+your image is used exactly as it comes, which is right for running tests and means a changed pin
+changes nothing your suite would see.
+
+Nothing was added to permit this. `install` has accepted an arbitrary command since DR-0007 was
+built, and this paragraph exists because nothing said so — the example at the top of this file
+shows `install: none`, and a reader with an image of their own could reasonably conclude the field
+was not for them.
+
 **The one frontier that will not move**: any Linux image with a shell, on this instance's
 architecture. Both are checked when you register, and `distroless`/`scratch` are permanently out.
 
