@@ -68,7 +68,23 @@ jobs:
             echo "::warning::This gate does not cover the sandbox. Run 'pytest' on a host with"
             echo "::warning::Docker before trusting a green tick here — see CONTRIBUTING.md."
           fi
+      # **The registry check runs here and nowhere else** (item 192). `test_the_surface_is_not_behind
+      # _the_registry` asks ghcr.io whether an image exists for the version this tree claims to be,
+      # and skips without this variable so a developer with no network still gets a green suite.
+      #
+      # The question cannot be answered inside the tree: `version=0.1.0a8, surface=0.1.0a7` is a
+      # correct publication whose post-release steps are not done *yet*, and also post-release steps
+      # done *wrong*. Same bytes. Only the registry separates them, and the pull is anonymous — a
+      # public package, no credential, nothing to leak or rotate.
+      #
+      # It is expected to be **red on `main` for about half an hour** after each release, between the
+      # image being published and the post-release commit landing. That is accurate rather than
+      # unfortunate: the published image really is newer than the documented one, and an alarm that
+      # stays quiet during the bad state to avoid being inconvenient is the defect this repository
+      # keeps rediscovering.
       - run: uv run pytest -ra
+        env:
+          ASK_THE_REGISTRY: "1"
 
   # DR-0001: the DCO is our contributor agreement, so it gets checked, not just documented.
   # Deliberately our own five lines of shell: several published DCO actions call the GitHub API to
