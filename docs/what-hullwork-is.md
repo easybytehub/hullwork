@@ -102,11 +102,13 @@ takes that as an inventory would be misled by this page rather than by the ones 
 | signal | state, 2026-08-09 |
 |---|---|
 | a production error | **released** |
-| a dependency advisory | **built and unreleased** — work items 172–180, absent from `published-surface.json`, which records `0.1.0a7` |
+| a dependency advisory | **released in `0.1.0a8`** — `hullwork deps`, work items 172–180, present in `published-surface.json` |
 | a static finding | does not exist |
 
 `CONTRIBUTING.md`'s rule is that documentation describes the released artefact rather than the
-working tree, so no document may show that command until a release carries it — which is why it is
-not named on this page either. The guard refused the first draft of this section for exactly that,
-and naming a command a reader cannot run would invite them to type it and be told it does not
-exist.
+working tree, and it is the reason the middle row spent a day naming a state and refusing to name a
+command: the guard refused the first draft of this section for exactly that. The rule did not soften
+when the release landed — the row changed because the artefact did.
+
+The third row is the honest one. Three oracles is the shape of the mechanism, not an inventory of
+what you can run.

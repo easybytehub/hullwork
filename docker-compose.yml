@@ -25,7 +25,7 @@ services:
     #
     # To run your own build instead — a change you are testing, or an architecture with no published
     # image — add `build: .` beside this line from a checkout, and `docker compose up -d --build`.
-    image: ghcr.io/easybytehub/hullwork:0.1.0a7
+    image: ghcr.io/easybytehub/hullwork:0.1.0a8
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped

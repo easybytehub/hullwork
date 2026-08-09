@@ -53,8 +53,8 @@ returns a verdict with the run attached. The oracle changes per signal; the mach
 | a dependency advisory | *this version is vulnerable* | your own suite, run against the upgrade |
 | a static finding | *this could be exploited* | a test naming the hostile input |
 
-**Only the first row is in a release.** The second is built and unreleased — it is in no image you
-can pull, and this page will say so until it is. The third does not exist.
+**The first two rows are in a release** — the second since `0.1.0a8`, and it says no more often than
+yes. The third does not exist.
 
 **"I could not verify this" is a first-class answer**, and on this repository's own numbers — 160
 code scanning alerts, five real — it is the answer about nine times in ten. Delivering it honestly
@@ -152,7 +152,7 @@ code, and writes nothing outside a directory you name. → above, and
 [docs/install.md § 1](docs/install.md#1-try-the-agent-half)
 
 **2. The evaluation stack — recommended for a first look.** Needs Docker and nothing else, with **no
-clone and no build**: one compose file and a published image (`ghcr.io/easybytehub/hullwork:0.1.0a7`,
+clone and no build**: one compose file and a published image (`ghcr.io/easybytehub/hullwork:0.1.0a8`,
 amd64 and arm64). One container — the half that answers webhooks — which starts with no credentials at
 all and says in a sentence what it cannot do yet.
 → [docs/install.md § 2](docs/install.md#2-the-evaluation-stack)
@@ -173,7 +173,7 @@ instance has ever run it, which is not support.
 | | | |
 |---|---|---|
 | **Forges** | ✅ Forgejo · ✅ Gitea · ✅ GitHub | ⚠️ GitLab — the adapter is written, no instance has run it |
-| **Error trackers** | ✅ GlitchTip, and anything posting a Sentry-compatible payload | ⚠️ Sentry's own route is built and **not in a release yet**; when it lands it is authenticated by the token in the URL and its signature is not verified — which is what GlitchTip offers at all. [`SECURITY.md`](SECURITY.md) says what that does not cover |
+| **Error trackers** | ✅ GlitchTip and Sentry, and anything posting a Sentry-compatible payload | ⚠️ Both routes are authenticated by the token in the URL and **neither signature is verified** — signing is what GlitchTip does not offer at all, so one credential is checked one way for both. [`SECURITY.md`](SECURITY.md) says what that does not cover |
 | **Model endpoints** | ✅ anything speaking the Anthropic or OpenAI protocol family — Anthropic and OpenRouter both exercised | Your key, your endpoint. No provider is integrated and none is privileged |
 | **Agents** | ✅ `claude-code`, exercised | Any container that takes a worktree and returns changed files qualifies: the agent is a contract, not an integration |
 | **Your stack** | ✅ any Linux image with a shell, on this instance's architecture — you name the image your CI already uses | ❌ `distroless` and `scratch`, refused at registration rather than at attempt time |
