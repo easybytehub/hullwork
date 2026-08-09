@@ -45,7 +45,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 import yaml
 
@@ -60,6 +60,83 @@ CI_LOCATIONS: tuple[str, ...] = (
     ".github/workflows/",
     ".gitlab-ci.yml",
 )
+
+#: CI locations that name the forge holding the repository, and the ones that do not.
+#:
+#: **`.github/workflows/` is deliberately absent, and that absence is the whole subject of
+#: item 171.** Forgejo Actions and Gitea Actions both read that directory — this repository's
+#: own deployment runs those workflows on a Forgejo instance — so treating it as evidence of
+#: GitHub would be wrong for exactly the self-hosted projects this product is for.
+CI_NAMES_THE_FORGE: tuple[tuple[str, str], ...] = (
+    (".forgejo/workflows/", "forgejo"),
+    (".gitea/workflows/", "gitea"),
+    (".gitlab-ci.yml", "gitlab"),
+)
+
+#: Hosts that name themselves. Everything else is self-hosted and unresolvable from here:
+#: `git.example.com` may be Forgejo, Gitea, a private GitHub or a self-hosted GitLab, and no
+#: request may be made to find out — `propose` reaches nothing and needs no credential.
+HOSTS_THAT_NAME_THE_FORGE: dict[str, str] = {
+    "github.com": "github",
+    "gitlab.com": "gitlab",
+}
+
+#: What `git.provider` says when nothing decided.
+#:
+#: A value rather than a placeholder, unlike `_coordinate_of`'s `owner/name`. The field is
+#: required, so an unparseable proposal would cost every reader a fix to serve the undecidable
+#: minority — and unlike a repository coordinate, a wrong forge name is something an operator
+#: recognises on sight. What it must not do is look like a reading, so `render` says it is a
+#: default and names what would have settled it.
+PROVIDER_WHEN_UNDECIDED = "forgejo"
+
+
+class ForgeGuess(NamedTuple):
+    """Which forge holds a repository, and what said so.
+
+    `evidence` is `None` when nothing did. That is not a detail for the caller to ignore: the
+    difference between an observation and a default is what `render`'s contract is about.
+    """
+
+    provider: str
+    evidence: str | None
+
+
+def host_of_remote(url: str | None) -> str | None:
+    """The host out of a git remote URL, in either spelling, or `None`.
+
+    `_coordinate_of` has parsed this URL since item 107 and kept only the last two segments —
+    discarding the one part of it that says which forge this is (item 171).
+    """
+    if not url:
+        return None
+    trimmed = url.strip().removesuffix(".git")
+    for scheme in ("https://", "http://", "ssh://", "git://"):
+        trimmed = trimmed.removeprefix(scheme)
+    # `git@host:owner/name` and `git@host/owner/name` after the scheme is gone.
+    _, _, after_user = trimmed.rpartition("@")
+    host = re.split(r"[:/]", after_user, maxsplit=1)[0]
+    # A host has a dot and no whitespace. Anything else was not a URL, and guessing from it
+    # would be the constant-in-a-costume this function exists to remove.
+    if not host or " " in host or "." not in host:
+        return None
+    return host.lower()
+
+
+def forge_for(source: str | None, remote_host: str | None) -> ForgeGuess:
+    """Which forge holds this repository. Pure, and reaches nothing.
+
+    **The host outranks the CI location**, because where a repository lives beats which runner
+    reads its workflows: a GitHub repository whose workflows sit in `.forgejo/workflows/` is a
+    mirror, and the coordinate a manifest needs is the one that answers requests.
+    """
+    named = HOSTS_THAT_NAME_THE_FORGE.get(remote_host or "")
+    if named:
+        return ForgeGuess(named, f"the origin remote is on {remote_host}")
+    for prefix, provider in CI_NAMES_THE_FORGE:
+        if source and source.startswith(prefix):
+            return ForgeGuess(provider, f"the CI configuration is at {prefix}")
+    return ForgeGuess(PROVIDER_WHEN_UNDECIDED, None)
 
 #: Package-manager invocations that mean "this step installs the dependencies".
 #:
@@ -200,6 +277,9 @@ class Proposal:
     repo: str
     #: The CI file it read, or `None` when there was none.
     source: str | None = None
+    #: The host of the `origin` remote, when this was read from a checkout that has one.
+    #: Item 171 — the strongest signal for `git.provider`, and it was being thrown away.
+    remote_host: str | None = None
     base: str | None = None
     install: str | None = None
     tests: str | None = None
@@ -904,6 +984,25 @@ def only_files_that_exist(proposal: Proposal, paths: object) -> Proposal:
     return proposal
 
 
+def _the_git_lines(proposal: Proposal) -> list[str]:
+    """`git:`, and whether its provider was read or defaulted to. Item 171.
+
+    Uncommented means observed, everywhere else in this output. A constant printed under that
+    rule is the failure this file exists to avoid, so an undecided provider is preceded by a
+    comment saying so rather than being quietly indistinguishable from a reading.
+    """
+    guess = forge_for(proposal.source, proposal.remote_host)
+    line = f"git: {{provider: {guess.provider}, repo: {proposal.repo}}}"
+    if guess.evidence:
+        return [line]
+    return [
+        "# `provider` below is a default, not a reading: neither the origin remote's host",
+        "# nor the CI path named a forge. `.github/workflows/` cannot name one — Forgejo",
+        "# and Gitea Actions read that directory too. Correct it if this is not a Forgejo.",
+        line,
+    ]
+
+
 def render(proposal: Proposal) -> str:
     """The proposal as manifest text: observed values live, everything else commented.
 
@@ -920,7 +1019,7 @@ def render(proposal: Proposal) -> str:
         "# that looks finished is a proposal nobody checks.",
         "",
         f"project: {name}",
-        f"git: {{provider: forgejo, repo: {proposal.repo}}}",
+        *_the_git_lines(proposal),
         "",
     ]
 
@@ -969,6 +1068,36 @@ def render(proposal: Proposal) -> str:
             "#     Commented out: an installer needs at least one `dependencies` file to",
             "#     install from — it is the cache key — and this reader could not name one",
             "#     for that command. Add the file your project reads and uncomment both.",
+        ]
+    elif proposal.base:
+        # **What no installer costs, said where the field is not** (item 185). Every other field
+        # this reader cannot fill carries a comment explaining what is missing; `install` carried
+        # none, because its absence produces a manifest that **parses and builds perfectly**. What
+        # it cannot do is measure a dependency upgrade: with no installer the image is the base
+        # exactly as it comes, so rewriting a pin changes nothing the suite runs against.
+        #
+        # Measured on 2026-08-09 (item 182) before this comment existed: a checkout pinning
+        # `jinja2==2.4.1`, a base image carrying 3.0.0, and a verdict reading *your suite passed
+        # before this change and passes after it* — about a version that was never installed.
+        #
+        # The command is deliberately not named: it is not in the published image, and naming
+        # something a reader cannot run invites them to type it and be told it does not exist.
+        lines += [
+            f"{mark}# No `install:` — nothing in the CI file named one, and this reader does not",
+            f"{mark}# guess between pip, uv and poetry from a lock file. Your tests will run: the",
+            f"{mark}# image is `{proposal.base}` exactly as it comes.",
+            f"{mark}#",
+            f"{mark}# What it costs: dependency upgrades cannot be **measured** against this",
+            f"{mark}# manifest. Nothing is installed from a lock file, so changing a pinned",
+            f"{mark}# version changes nothing your suite would run against, and a green suite",
+            f"{mark}# would say nothing about the upgrade.",
+            f"{mark}#",
+            f"{mark}# To answer that, keep this base and add two lines — the command your CI",
+            f"{mark}# already uses, and the file it reads:",
+            f"{mark}#     install: <your command>",
+            f"{mark}#     dependencies: [<the file your versions are pinned in>]",
+            f"{mark}# That is one layer on top of the image you named, not a rebuild from",
+            f"{mark}# scratch, and it is why no list here has to grow for your ecosystem.",
         ]
     if proposal.packages:
         lines.append(f"{mark}packages: [{', '.join(proposal.packages)}]")

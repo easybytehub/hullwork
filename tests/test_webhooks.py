@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from hullwork.config import get_settings
 from hullwork.db import make_engine, make_session_factory
 from hullwork.main import app
-from hullwork.models import Delivery, Item, Project
+from hullwork.models import Delivery, Item, Lane, Project
 from hullwork.security import generate_token, hash_token
 from hullwork.webhooks import MAX_BODY_BYTES, MAX_JSON_DEPTH, json_depth
 
@@ -55,6 +55,15 @@ PAYLOAD = {
         }
     ],
 }
+
+
+#: **The recorded envelope, not one written for this test** (item 191). It carries its own
+#: provenance in a `_comment`: read from Sentry's `app_platform_event.py` on 2026-07-26, and it is
+#: the same file `test_normalise` parses. Until this item it had only ever been handed to
+#: `sentry.parse` directly — never posted at the door, which is the half that was never measured.
+SENTRY_PAYLOAD = json.loads(
+    (ROOT / "tests/fixtures/webhook-sentry-event-alert.json").read_text(encoding="utf-8")
+)
 
 
 @pytest.fixture
@@ -151,15 +160,79 @@ def test_an_unknown_provider_is_refused(client: TestClient, token: str) -> None:
     assert _post(client, token, provider="rollbar").status_code == 404
 
 
-def test_the_sentry_route_says_it_is_not_enabled_rather_than_failing_oddly(
+def test_a_sentry_delivery_with_a_valid_token_becomes_an_item(
+    client: TestClient, token: str, tmp_path: Path
+) -> None:
+    """**The route this refused for wanting a better guarantee** (item 189, operator's choice).
+
+    It answered `501` because verifying Sentry's HMAC means holding its client secret reversibly —
+    correct, and it was written as *reversible secret or nothing*. There is a third option:
+    **GlitchTip cannot sign at all**, so the token in the URL has been the credential since M1, and
+    Sentry gets that same credential verified the same way. The route was declining to offer a
+    guarantee better than the one the only working provider gets.
+    """
+    response = _post(client, token, payload=SENTRY_PAYLOAD, provider="sentry")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "accepted"
+    with _session(tmp_path) as db:
+        assert db.query(Delivery).count() == 1
+        item = db.query(Item).one()
+        assert item.title.startswith("TypeError")
+        # **The fields that decide something**, not only the one that displays.
+        #
+        # This delivery is red, and the interesting part is *why*: the recorded culprit is
+        # `app.views.checkout in process_payment`, and this manifest declares `red: ["payment"]`.
+        # GlitchTip's fixture describes a different error (`app.cart in total`) and comes out green,
+        # so the two are not comparable and both are right.
+        #
+        # **The lane alone cannot say that**, which is the trap this assertion was nearly written
+        # into: red is *also* what an item whose culprit never arrived would get, because anything
+        # unclassified defaults to red. So the reason is what is asserted — it names the rule that
+        # fired, and a lost culprit would give the default's wording instead.
+        assert item.lane is Lane.RED
+        assert item.lane_reason and "payment" in item.lane_reason, (
+            f"the culprit did not reach triage; the lane defaulted: {item.lane_reason!r}"
+        )
+        assert item.permalink and "sentry.io" in item.permalink
+
+
+def test_a_wrong_token_looks_the_same_on_both_routes(
     client: TestClient, token: str
 ) -> None:
-    """Its adapter exists, but verifying its HMAC needs the secret in reversible form — a storage
-    decision not yet made. Saying so beats a confusing 401."""
-    response = _post(client, token, provider="sentry")
+    """**Status and body**, because a difference between them confirms a provider by probing.
 
-    assert response.status_code == 501
-    assert "GlitchTip" in response.text
+    Item 122 already established that shape for the page: a wrong token's `404` is byte-identical
+    to an unknown path's. The same reasoning applies to two providers on one door — if Sentry's
+    refusal read differently from GlitchTip's, the door would answer a question nobody is entitled
+    to ask.
+    """
+    wrong = "b" * 43
+
+    glitchtip = _post(client, wrong)
+    sentry = _post(client, wrong, payload=SENTRY_PAYLOAD, provider="sentry")
+
+    assert glitchtip.status_code == sentry.status_code
+    assert glitchtip.text == sentry.text
+
+
+def test_the_signature_header_is_never_read_as_authentication(
+    client: TestClient, token: str
+) -> None:
+    """**(B) is weaker than (C) and must not pretend otherwise.**
+
+    Sentry does sign, and this ignores it: what authenticates is the token in the path. A delivery
+    carrying a plainly bogus signature is accepted, because the signature is not what was checked —
+    and a reader of this test learns that the HMAC is unverified rather than inferring it from a
+    silence.
+    """
+    response = client.post(
+        f"/webhooks/sentry/{SLUG}/{token}",
+        json=SENTRY_PAYLOAD,
+        headers={"sentry-hook-signature": "0" * 64},
+    )
+
+    assert response.status_code == 200
 
 
 # --- limits ----------------------------------------------------------------------------------

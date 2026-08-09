@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 300" width="1280" height="300"
      role="img" aria-labelledby="t d">
-  <title id="t">Hullwork — from production errors to reviewable draft pull requests</title>
+  <title id="t">Hullwork — verifies which of your tools' claims are actually true</title>
   <desc id="d">The Hullwork wordmark beside its mark: two filled quadrants, diagonally opposed. Under
-    it, the promise — from production errors to reviewable draft pull requests, self-hosted, with your
-    forge, your error tracker, your model endpoint and a human gate on every merge. Along the bottom,
-    the three counts from one real attempt: 904 passed untouched, 2 failed with the new test and no
-    fix, 906 passed with the fix applied.</desc>
+    it, the claim — it verifies which of your tools' claims are actually true, before a person is
+    asked — and then: self-hosted, with your forge, your error tracker, your model endpoint and a
+    human gate on every merge. Along the bottom, the three counts from one real attempt: 904 passed
+    untouched, 2 failed with the new test and no fix, 906 passed with the fix applied.</desc>
 
   <!-- **The card carries its own background**, rather than relying on the reader's page. GitHub
        renders this over light or dark depending on a setting nobody here controls, and a banner that
@@ -55,7 +55,16 @@
 
   <text class="word mono" x="150" y="118" font-size="52" font-weight="600" letter-spacing="-0.02em">hullwork</text>
 
-  <text class="ink" x="74" y="176" font-size="25">From production errors to reviewable <tspan font-weight="600">draft</tspan> pull requests.</text>
+  <!-- **Rewritten 2026-08-09, item 181.** What it said before named one signal's two endpoints, on
+       the front of a product whose claim is about verification. The emphasis moves with it: it was
+       on the word `draft`, a property of the artefact, and it is now on what was established about
+       it.
+
+       The old wording is in item 181 and in the commit that changed it, and is deliberately not
+       quoted here — the guard that keeps it out of published surfaces is a plain text search, and
+       it caught this comment. That is the third time in one item: the same mistake was made in
+       `pyproject.toml`, which is where the lesson is written down. -->
+  <text class="ink" x="74" y="176" font-size="25">Verifies which of your tools&#8217; claims are <tspan font-weight="600">actually true</tspan>, before a person is asked.</text>
   <text class="muted" x="74" y="208" font-size="18">
     Self-hosted · your forge · your error tracker · your model endpoint · a human gate on every merge
   </text>

@@ -113,7 +113,7 @@ OPERATIONS = frozenset(
     | {
         f"cli:{name}"
         for name in (
-            "approve", "config", "doctor", "gateway", "init", "lease",
+            "approve", "config", "deps", "doctor", "features", "gateway", "init", "lease",
             "page-token", "password", "projects", "propose", "prune", "republish",
             "requeue", "status", "sweep", "try", "work",
         )

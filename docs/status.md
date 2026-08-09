@@ -4,6 +4,26 @@ Pre-alpha. This page is the honest scope, kept apart from the README so it has r
 so nothing in it has to be shortened to keep an introduction readable. It changes weekly; the date on
 each claim is part of the claim.
 
+> **What all of this is the state of.** Hullwork verifies which of the things your tools claim are
+> actually true, before a person is asked — [what Hullwork is](what-hullwork-is.md). Three signals,
+> three oracles, one mechanism. This page was accurate about the halves and silent about what they
+> were halves of, so here is the row that was missing (item 181, 2026-08-09):
+>
+> | signal | oracle | state |
+> |---|---|---|
+> | a production error | a test that fails first and passes after | **released**, and everything below describes it |
+> | a dependency advisory | your own suite, run against the upgrade | **built and unreleased** — in no image you can pull |
+> | a static finding | a test naming the hostile input | does not exist |
+>
+> The second row is work items 172–180. Its command is deliberately **not named here**: the guard on
+> this repository's documentation refused the sentence that named it, and it was right to — a command
+> a reader cannot run is an invitation to type it and be told it does not exist. What is actionable
+> is the state, and the state is *not in an image you can pull*.
+>
+> This page will keep saying so until a release contains it: documentation describes the released
+> artefact, not the working tree (`CONTRIBUTING.md`, and item 165 records the three times that rule
+> was learnt the hard way).
+
 ## What works today
 
 A production error posted by your error tracker is authenticated, stored, normalised, deduplicated,
@@ -39,10 +59,14 @@ its suite runs against a blank one per phase. That path has been exercised by **
 
 ## What does not exist yet
 
-- **Only the GlitchTip webhook route is enabled.** Sentry signs its webhooks properly and would be
-  verified by HMAC — that route is written and switched off, because verifying a signature means
-  storing a client secret in reversible form, which is a different storage decision from the one-way
-  hash used here and has not been made.
+- **Only the GlitchTip webhook route is enabled in a release.** Sentry's is **built and unreleased**
+  as of 2026-08-09 (item 189): in the working tree it is authenticated by the token in the URL — the
+  same credential GlitchTip has, checked the same way, because GlitchTip cannot sign at all. Its
+  signature is deliberately not verified; that would need Sentry's client secret held in reversible
+  form, which is a storage decision this project has not made.
+
+  The image you can pull still answers `501` there, and this page will say so until a release
+  carries it — the same rule as the dependency signal above, and for the same reason.
 - **Of the notification channels, only `none` and `console` deliver.** `telegram` and `email` parse in
   the manifest and are refused at delivery, because a transport nobody has exercised is a transport
   whose first real run happens in front of a user.

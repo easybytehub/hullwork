@@ -26,6 +26,7 @@ failure simultaneously.
 import logging
 import shutil
 import tempfile
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from hullwork.sandbox.run import (
     RunResult,
     Sandbox,
     collect_changes,
+    created_test_config,
     is_test_infrastructure,
     snapshot,
 )
@@ -83,6 +85,13 @@ class Verdict:
     #: Test infrastructure the fix phase had changed and this module put back (item 046). Non-empty
     #: means the published claim rests on the second green gate, not the first.
     restored: str = ""
+    #: Dependency files the fix phase had changed and `refit` put back (item 179). Non-empty means
+    #: the phase reached for the one shortcut that would have passed every gate.
+    reverted: str = ""
+    #: The headline sentence, when this sequence's claim is not the ordinary one. Empty means
+    #: `evidence` chooses from the outcome, which is right for every attempt that starts from a
+    #: reproducing test somebody wrote. A refit does not: see `refit` below.
+    claim: str = ""
 
 
 def dispatch(
@@ -326,6 +335,297 @@ def dispatch(
     )
 
 
+#: The claim a refit publishes under, and it is deliberately not `evidence`'s ordinary one.
+#:
+#: *A test that failed against unmodified code passes with this change applied* is false here in the
+#: one word that carries it: the code **was** modified — by the upgrade — before the first gate ran.
+#: A headline that says otherwise would overclaim in exactly the direction item 171 removed, and it
+#: would be the artefact rather than the run that lied.
+#: It does not quote the sentence it replaces, deliberately: a headline that names the claim it is
+#: *not* making reads as that claim to somebody skimming, and it is the line a reviewer acts on.
+REFIT_CLAIM = (
+    "**The tests this upgrade broke pass with the change below, and the upgrade is still "
+    "applied.** The code here had already been changed before the first run — by the upgrade "
+    "itself — so this is not the ordinary red-green claim. Both runs are below with their exit "
+    "codes, and the pinned version was read back out of the tree after the second one."
+)
+
+#: And the four ways a refit ends without one, each with its own sentence.
+#:
+#: `evidence._claim` chooses from the outcome, and every one of its sentences is about *a bug* — the
+#: bug was reproduced, the bug could not be reproduced, this appears to be fixed already. None of
+#: those is what happened here, and an artefact that calls a dependency upgrade a bug sends its
+#: reader looking for one. Carried on the verdict rather than inferred at the far end, so the two
+#: surfaces cannot come to disagree about what a run was.
+REFIT_NOT_BROKEN = (
+    "**This upgrade does not break your suite here, so there was nothing to fix.** The suite was "
+    "run with the new version applied and it passed. No agent was called."
+)
+REFIT_REVERTED = (
+    "**The attempt reverted the upgrade instead of making the code fit it, and that is not a "
+    "fix.** Putting the old version back makes a suite pass and undoes what this work exists to "
+    "possible. Hullwork put the dependency files back and published nothing."
+)
+REFIT_NOT_FIXED = (
+    "**The tests this upgrade broke still fail.** Nothing was merged and nothing was hidden; what "
+    "was tried is below, with both runs and their exit codes."
+)
+REFIT_NO_CHANGE = (
+    "**No change was produced, so there is nothing to check.** The upgrade still breaks the tests "
+    "named below."
+)
+
+
+def refit(
+    session: object,
+    item: Item,
+    manifest: Manifest,
+    engine: Engine,
+    *,
+    box: Sandbox,
+    attempt: Attempt,
+    package: str,
+    to: str,
+    guarded: "Sequence[str]",
+    version_now: "Callable[[Path], str | None]",
+) -> Verdict:
+    """Make a broken upgrade fit. Item 179, DR-0018 step 4.
+
+    ```
+     0. RED GATE      run `tests` with the upgrade already applied   → must FAIL
+     1. refit         agent; source editable, dependencies read-only → the change
+     2. GREEN GATE    run `tests` again, upgrade still applied       → must PASS
+     3. the re-read   what the tree pins now                         → must be `to`
+    ```
+
+    **The red gate is free and it is inverted.** In `dispatch` above, red means the candidate test
+    reproduces the bug; here it is the starting condition, and the failing tests are the project's
+    own — failing against a version somebody published, with nobody having authored them for the
+    occasion. DR-0003's expensive half is therefore already satisfied by evidence no model can
+    flatter, which is why this sequence is three steps rather than six.
+
+    **The whole correctness of this function is that the dependency files are read-only to step 1.**
+    Reverting is the obvious cheat and it is the most plausible-looking false artefact this product
+    could ever emit: put the old version back and the suite goes green, red before, green after,
+    upgrade gone.
+
+    Measured while building this, and it changes what the guard is *for*: within one attempt a
+    revert **cannot buy a green gate**. The image is built before this function is called and the
+    phases have no network, so the installed version cannot move whatever the files say. What a
+    revert buys is the *published diff* — a pull request that undoes the upgrade it claims to make
+    possible, with two honest gate runs attached. So the files are restored before anything is
+    collected, and the verdict says what was attempted.
+
+    `version_now` is the backstop and it is a different guard, not a second copy of the first: the
+    restore covers the files this ecosystem's resolver is known to touch (`resolve.touches`), and
+    the re-read covers everything it does not — a pin moved somewhere nobody taught the guard about,
+    a vendored dependency, an ecosystem added later. A green gate whose tree no longer carries the
+    upgraded version is a revert however it got there.
+    """
+    worktree = box.worktree
+    tests = (manifest.tests or "").strip()
+    lint_ask = (manifest.lint or "") if "lint" in manifest.autofix.gates else ""
+    if not tests:  # pragma: no cover - the manifest parser refuses this before we get here
+        raise Abandoned("the manifest declares no test command")
+
+    # --- step 0: the red gate, already paid for -----------------------------------------------
+    red = _run_gate(session, attempt, box, AttemptPhase.RED_GATE, tests)
+    if red.ok:
+        # Before the model is called. The breakage does not reproduce here, so there is nothing to
+        # fix and nothing was learned about the upgrade that `deps --verify` had not already said.
+        return Verdict(
+            AttemptOutcome.NOT_REPRODUCIBLE,
+            AttemptPhase.RED_GATE,
+            claim=REFIT_NOT_BROKEN,
+            detail=(
+                f"the suite passes with {package} {to} applied, so there is nothing here to fix. "
+                f"Whatever broke when this upgrade was measured does not break now."
+            ),
+        )
+
+    # Snapshotted after the gate, not before: a real test run writes caches, and taken earlier every
+    # one of those looks like something the agent produced (the `.pytest_cache` finding, item 025).
+    pristine = snapshot(worktree)
+
+    # --- step 1: the agent, with the dependencies out of reach --------------------------------
+    _run_agent(
+        session, attempt, box, engine, Phase.REFIT,
+        test_path=manifest.test_path, lint=lint_ask,
+    )
+    reverted = _restore_dependencies(worktree, pristine, guarded)
+    try:
+        changes = collect_changes(worktree, pristine)
+    except UnsafePathError as exc:
+        return Verdict(
+            AttemptOutcome.FAILED,
+            AttemptPhase.FIX,
+            reverted=reverted,
+            claim=REFIT_NOT_FIXED,
+            detail=f"the fix phase produced something it may not: {exc}",
+        )
+    if not changes:
+        # Two different findings, and they must not share a sentence: a phase that did nothing and
+        # a phase that did the one forbidden thing are not the same report to a person.
+        return Verdict(
+            AttemptOutcome.FAILED,
+            AttemptPhase.FIX,
+            reverted=reverted,
+            claim=REFIT_REVERTED if reverted else REFIT_NO_CHANGE,
+            detail=(
+                f"the fix phase reverted the upgrade instead of making the code fit it "
+                f"({reverted}), and changed nothing else. Those files were put back, so there is "
+                f"no change here — a suite made green by putting the old version back is a revert, "
+                f"not a fix."
+                if reverted
+                else "the fix phase changed nothing, so there is no fix to check"
+            ),
+        )
+
+    # --- step 2: the green gate ---------------------------------------------------------------
+    green = _run_gate(session, attempt, box, AttemptPhase.GREEN_GATE, tests)
+
+    # Item 046, unchanged: a suite that collects nothing passes trivially, and the *difference*
+    # between the two runs is the finding rather than either one of them.
+    restored = _restore_infrastructure(worktree, pristine)
+    if restored:
+        try:
+            changes = collect_changes(worktree, pristine)
+        except UnsafePathError as exc:  # pragma: no cover - the earlier collection raises first
+            return Verdict(
+                AttemptOutcome.FAILED,
+                AttemptPhase.GREEN_GATE_RESTORED,
+                reverted=reverted,
+                claim=REFIT_NOT_FIXED,
+                detail=f"the restored tree could not be read back: {exc}",
+            )
+        regated = _run_gate(session, attempt, box, AttemptPhase.GREEN_GATE_RESTORED, tests)
+        if not regated.ok:
+            gamed = (
+                ", so it passed only because it had disabled the tests"
+                if green.ok
+                else " and the suite does not pass either way"
+            )
+            return Verdict(
+                AttemptOutcome.FAILED,
+                AttemptPhase.GREEN_GATE_RESTORED,
+                changes=changes,
+                restored=restored,
+                reverted=reverted,
+                claim=REFIT_NOT_FIXED,
+                detail=(
+                    f"the fix modified test infrastructure it may not have ({restored}) and the "
+                    f"suite fails once that is put back{gamed}"
+                ),
+            )
+    elif not green.ok:
+        return Verdict(
+            AttemptOutcome.FAILED,
+            AttemptPhase.GREEN_GATE,
+            changes=changes,
+            reverted=reverted,
+            claim=REFIT_NOT_FIXED,
+            detail=(
+                f"the suite still does not pass with {package} {to} applied"
+                + (
+                    f", and the fix phase had put the old version back ({reverted}) — that was "
+                    f"undone before this run, because a revert is not a fix"
+                    if reverted
+                    else ""
+                )
+            ),
+        )
+
+    # --- step 3: what does the tree pin now? ---------------------------------------------------
+    landed = version_now(worktree)
+    if landed != to:
+        # A green gate this side of a revert is the one artefact this whole item exists to prevent.
+        # Reported as what it is, and never as a fix, whichever route got it here.
+        return Verdict(
+            AttemptOutcome.FAILED,
+            AttemptPhase.GREEN_GATE,
+            changes=changes,
+            restored=restored,
+            reverted=reverted or ", ".join(guarded),
+            claim=REFIT_REVERTED,
+            detail=(
+                f"the suite passes and the tree no longer pins {package} at {to}: it "
+                + (f"pins {landed}" if landed else "no longer pins it at all")
+                + f". That is a revert rather than a fix — the upgrade this was supposed to make "
+                f"possible is gone, and a green suite without it proves nothing about {to}."
+            ),
+        )
+
+    # --- step 4: lint, only if the manifest names the gate (item 067) --------------------------
+    lint_failed = ""
+    if "lint" in manifest.autofix.gates and manifest.lint:
+        lint = _run_gate(session, attempt, box, AttemptPhase.LINT_GATE, manifest.lint)
+        if not lint.ok:
+            lint_failed = (
+                f"The gate that failed is `{manifest.lint}`, run against the change below.\n"
+                f"{failing_lines(lint.output) or lint.output[-2000:]}"
+            )
+
+    note = ""
+    if reverted:
+        # Led with, not tucked away, for item 067's reason: an artefact whose shape hides its own
+        # weakest part is worse than none. The claim below still stands — the gate ran with the
+        # upgrade in place — but a reviewer has to know the phase reached for the shortcut.
+        note += (
+            f"The fix phase also edited dependency files it may not have ({reverted}). They were "
+            f"put back before the run below, so the change published here contains none of them "
+            f"and the suite passed with {package} {to} still applied.\n\n"
+        )
+    if restored:
+        note += (
+            f"This fix had also modified test infrastructure it may not have ({restored}); those "
+            f"files were put back and the suite was run again, so the claim rests on that second "
+            f"run and the published change does not contain them.\n\n"
+        )
+    return Verdict(
+        AttemptOutcome.PR_OPEN_LINT_FAILED if lint_failed else AttemptOutcome.PR_OPEN,
+        AttemptPhase.PUBLISH,
+        changes=changes,
+        restored=restored,
+        reverted=reverted,
+        claim=REFIT_CLAIM,
+        detail=(f"{lint_failed}\n\n" if lint_failed else "") + note + (
+            f"this makes {package} {to} possible: the tests below failed with it applied and pass "
+            f"with the change, and {package} is still pinned at {to} in the tree those runs used."
+        ),
+    )
+
+
+def _restore_dependencies(
+    worktree: Path, pristine: dict[str, bytes], guarded: "Sequence[str]"
+) -> str:
+    """Put every dependency file back exactly as the upgrade left it, and say which had moved.
+
+    **Restoring rather than merely detecting**, for `_restore_candidate`'s reason one file over: a
+    reverted pin that reached `collect_changes` would be published, and the pull request would undo
+    the upgrade in its own diff while its body claimed to make it possible.
+
+    Three ways a file can move and all three are a revert: changed, deleted, and — the one that is
+    easy to leave out — **created where there was none**. A project pinning in `requirements.txt`
+    with no `package.json` beside it can have one written, and a guard that only compared existing
+    files would not see it.
+    """
+    moved: list[str] = []
+    for name in guarded:
+        target = worktree / name
+        original = pristine.get(name)
+        if original is None:
+            if target.exists():
+                moved.append(name)
+                target.unlink()
+            continue
+        if target.exists() and target.read_bytes() == original:
+            continue
+        moved.append(name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(original)
+    return ", ".join(sorted(moved))
+
+
 #: How many failure lines a verdict carries. A suite with 2000 failures must not become the verdict,
 #: and after a dozen the operator has the shape of it — the rest is in `attempt_steps.output`.
 FAILURES_SHOWN = 12
@@ -524,6 +824,13 @@ def _restore_infrastructure(worktree: Path, pristine: dict[str, bytes]) -> str:
     The scope comes from `is_test_infrastructure`, which belongs to the instance. It deliberately is
     not the manifest's `test_path`: that field arrives from the watched repository, and it already
     pulls the other way — narrowing it tightens the reproduce-phase guard while loosening this one.
+
+    **And configuration that was invented rather than edited is removed** (item 179). Iterating the
+    snapshot alone left a hole this guard's own sentence describes: a phase that *creates* a root
+    `conftest.py` where the project had none switches the suite off, is absent from `pristine`, and
+    was therefore never touched — leaving `restored` empty, so the second gate never ran and the
+    attempt published with the mechanism in its diff. Measured against this function before
+    `created_test_config` existed.
     """
     restored: list[str] = []
     for path, original in pristine.items():
@@ -535,6 +842,11 @@ def _restore_infrastructure(worktree: Path, pristine: dict[str, bytes]) -> str:
         restored.append(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(original)
+    for path in created_test_config(worktree, pristine):
+        # Removed rather than restored: there is nothing to put back, and leaving it while
+        # reporting it would publish the file that decided the gate.
+        restored.append(path)
+        (worktree / path).unlink()
     return ", ".join(sorted(restored))
 
 
@@ -563,8 +875,24 @@ def build_brief_file(session: object, item: Item, contract_dir: Path) -> Path:
     Into the contract directory, not the worktree. The brief is Hullwork's input to the agent, not
     a change to the repository, and putting it in the tree made it look like one.
     """
+    return write_brief(brief.build(session, item), contract_dir)  # type: ignore[arg-type]
+
+
+def write_brief(text: str, contract_dir: Path) -> Path:
+    """The same file, from text somebody else composed. Item 179.
+
+    Split out because a refit's brief cannot come from `brief.build`: that one answers *what
+    Hullwork knows about this error* from the tracker and this instance's history, and a dependency
+    upgrade has no error, no fingerprint from a stranger and no occurrence count. Built from it, the
+    brief would open by saying the full event was never fetched — true of a tracker nobody asked,
+    and misleading about work whose evidence is better than any tracker's.
+
+    What stays shared is everything about *where* it goes and how, because that half has been wrong
+    twice: in the worktree it looked like a change to the repository, and without the mode the
+    container could not read it.
+    """
     contract_dir.chmod(CONTRACT_DIR_MODE)
     target = contract_dir / Path("brief.md")
-    target.write_text(brief.build(session, item), encoding="utf-8")  # type: ignore[arg-type]
+    target.write_text(text, encoding="utf-8")
     target.chmod(0o644)
     return target

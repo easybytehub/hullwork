@@ -548,7 +548,7 @@ class ForgejoCodeForge(_ForgejoAPI):
             "author": identity,
             "committer": identity,
             # `signoff` is available and deliberately not set: the DCO sign-off is a human act
-            # performed at the merge gate (CONTRIBUTING.md, the worker contract).
+            # performed at the merge gate (CONTRIBUTING.md).
             "files": [_to_operation(change) for change in changes],
         }
         data = self._request("POST", f"/repos/{repo}/contents", json=payload)

@@ -40,6 +40,13 @@ class Phase(StrEnum):
 
     REPRODUCE = "reproduce"
     FIX = "fix"
+    #: Item 179, DR-0018 step 4. The same job as `FIX` and a different thing to say, which is why
+    #: it is a phase rather than a flag on that one: `fix` opens by naming a reproducing test file
+    #: at `${TEST_PATH}/${TEST_FILE}`, and in a refit nobody wrote one — the failing tests are the
+    #: project's own, failing against an upgrade that is already applied. An agent told to look for
+    #: evidence that does not exist spends the item's one attempt on a misunderstanding, which is
+    #: what item 094 measured when the filename was wrong rather than absent.
+    REFIT = "refit"
 
 
 @dataclass(frozen=True)
@@ -323,6 +330,23 @@ test from the evidence, write no file and say so: that is a correct and useful a
 Make it pass with the smallest change to the source code. Do NOT modify the test — it is the
 evidence, and a test the fix was allowed to edit proves nothing. Run the whole suite before you
 finish: every other test must still pass."
+    ;;
+  refit)
+    # Item 179. The brief names the upgrade and the tests it broke; this says what the job is and
+    # what the one forbidden shortcut is. Stated here as well as enforced by the dispatcher,
+    # because an agent that reverts and is then reported for it has spent the item's one attempt
+    # on something it was never told not to do.
+    ASK="A dependency upgrade has ALREADY been applied to this checkout, and it broke tests that
+were passing. The brief names the package, both versions, and the tests that now fail.
+
+Change this project's own source code so those tests pass with the new version. Run the whole
+suite before you finish: every other test must still pass.
+
+Do NOT edit any dependency file — the pins, the manifest and the lock are read-only evidence
+here. Putting the old version back would make the suite pass and is not a fix: Hullwork restores
+those files, re-reads the version out of the tree, and reports that as a revert rather than as a
+fix. If the upgrade genuinely cannot be made to work, change nothing and say so — that is a
+correct and useful answer.${LINT_ASK}"
     ;;
   *) echo "unknown phase $PHASE" >&2; exit 2 ;;
 esac

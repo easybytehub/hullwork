@@ -20,7 +20,7 @@ under DR-0003, and a result nobody can see without opening a database is not a r
 
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from hullwork import spend, testoutput
@@ -28,6 +28,11 @@ from hullwork.models import Attempt, AttemptOutcome, AttemptPhase, AttemptStep, 
 from hullwork.scrub import Scrubber
 
 if TYPE_CHECKING:
+    # Imported for types only: `bump` and `osv` are about producing a verdict and this module is
+    # about rendering one, and a runtime import would make the renderer a dependency of the
+    # measurement rather than the other way round.
+    from hullwork.bump import Answer as BumpAnswer
+    from hullwork.osv import Advisory
     from hullwork.spend import Prices
 
 log = logging.getLogger(__name__)
@@ -128,13 +133,21 @@ _BEFORE_FIX = frozenset(
 )
 
 
-def _claim(attempt: Attempt) -> str:
+def _claim(attempt: Attempt, given: str = "") -> str:
     """The headline sentence, chosen from what the attempt actually did.
 
     `failed` at the red gate means the reproduction was refused; `failed` after it means the
     reproduction stood and the fix did not. The reader a comment is for cannot see the phase table
     first — the headline is what they act on, so it is the part that must not overstate.
+
+    **`given` is a sequence that does not make this sequence's claim** (item 179). Every sentence
+    below is about *a bug* — reproduced, not reproduced, already fixed — and a refit is about a
+    dependency upgrade that was applied before the first gate ran. Its own claim travels on the
+    verdict rather than being inferred from the outcome here, because a headline chosen at this end
+    from an outcome that means something else is how an artefact comes to contradict its own table.
     """
+    if given:
+        return given
     outcome = attempt.outcome or AttemptOutcome.ABANDONED
     if outcome is AttemptOutcome.FAILED:
         if attempt.phase_reached in _BEFORE_FIX:
@@ -154,6 +167,10 @@ def pull_request_body(
     secrets: list[str] | None = None,
     #: What the operator pays, for the cost row. `None` prints tokens and no money (item 133).
     prices: "Prices | None" = None,
+    #: The headline, when the sequence that produced this does not make the ordinary claim
+    #: (item 179). Empty means it is chosen from the outcome, which is right for every attempt
+    #: that starts from a reproducing test somebody wrote.
+    claim: str = "",
 ) -> str:
     """The body of the draft pull request.
 
@@ -163,7 +180,7 @@ def pull_request_body(
     """
     scrub = _scrubber(secrets)
     lines = [
-        _claim(attempt),
+        _claim(attempt, claim),
         "",
     ]
     if detail:
@@ -201,6 +218,105 @@ def pull_request_body(
     return body
 
 
+#: The sentence that keeps a green pull request honest, and the reason it is not a guarantee.
+#:
+#: **A green pull request is the easiest place in this product to overclaim.** The reviewer is being
+#: asked to merge, the diff is one line, and every other tool that put it there was guessing — so
+#: whatever this says will be read generously.
+#:
+#: **One author for the caveat, which is item 098's rule and was broken here first.** The first
+#: version of this said *what was measured is your suite… not that the upgrade is safe or that it
+#: fixes anything*, directly beneath `Answer.says`, which already ends *that is what was measured —
+#: not that the upgrade is safe, and not that it fixes anything your suite does not exercise*. Two
+#: paragraphs, same caveat, different words, at the top of the document a person acts on. Read
+#: rather than tested: the assertions were all satisfied. Item 098 records what that costs — "the
+#: first paragraph of `acme!9` said it twice and read like a program that had lost its place".
+#:
+#: So this carries only what the claim above does **not**: the mechanism. A suite that never touches
+#: the dependency produces this exact document, and that is a thing a reviewer can check about their
+#: own repository rather than a limit they are asked to hold in mind.
+WHAT_WAS_MEASURED = (
+    "The suite that was run is **yours**, which is what makes the sentence above worth something "
+    "and also what bounds it: if your tests never exercise this dependency, they go green without "
+    "ever loading the new version, and this page would read exactly the same. Nothing here "
+    "inspected the change itself."
+)
+
+
+def dependency_pull_request_body(
+    answer: "BumpAnswer",
+    advisories: "Sequence[Advisory]" = (),
+    *,
+    secrets: list[str] | None = None,
+) -> str:
+    """The body of a pull request for an upgrade that passed. Item 178, DR-0018 step 3.
+
+    **Three facts and no more**, because this is the artefact whose whole value is that it is
+    narrower than a competitor's: the advisory and where to read it, the claim in DR-0016's exact
+    wording, and the two runs with their exit codes and the runner's own summary lines.
+
+    The claim is `Answer.says` rather than a sentence written here, and that is the point of it
+    being a property on the answer: the terminal report prints the same string, so the two surfaces
+    cannot come to disagree about what was measured. A second rendering that happens to match today
+    is a rendering that will not match after the first edit to either.
+
+    **Scrubbed like everything else that leaves the instance** (item 027): the summary lines are
+    captured output of an arbitrary command, and a suite that prints an environment dump on failure
+    is not a rare event.
+    """
+    scrub = _scrubber(secrets)
+    lines = [answer.says, "", WHAT_WAS_MEASURED, ""]
+
+    if advisories:
+        lines += ["### What is published against the version you have", ""]
+        for advisory in advisories:
+            summary = f" — {scrub.text(advisory.summary)}" if advisory.summary else ""
+            lines.append(f"- [{advisory.id}]({advisory.url}){summary}")
+        lines.append("")
+
+    runs = answer.runs
+    if runs is not None:
+        # Both runs in one table, because the *pair* is the evidence and a reader comparing two
+        # sections separated by a page is a reader who will read one of them.
+        lines += [
+            "### The two runs",
+            "",
+            f"Command: `{scrub.text(runs.command)}`",
+            "",
+            "| | exit | what the runner said |",
+            "|---|---|---|",
+            f"| Before this change | `{runs.before_exit}` | "
+            f"{_summary_cell(runs.before_summary, scrub)} |",
+            f"| With `{answer.package} {answer.to}` | `{runs.after_exit}` | "
+            f"{_summary_cell(runs.after_summary, scrub)} |",
+            "",
+        ]
+
+    lines += [
+        "---",
+        "",
+        "Opened by Hullwork as a **draft**, after running the two commands above. Nobody merges "
+        "this but you.",
+    ]
+    body = "\n".join(lines)
+    if len(body) > MAX_BODY_CHARS:  # pragma: no cover - three facts do not reach 60,000 characters
+        body = body[:MAX_BODY_CHARS] + "\n\n… [body truncated by Hullwork]"
+    return body
+
+
+def _summary_cell(summary: str, scrub: Scrubber) -> str:
+    """The runner's own line, or the fact that it printed none.
+
+    **Never silence**, which is `_what_was_checked`'s rule for the same reason: a cell left out
+    reads as *the suite said nothing*, and that is a claim nobody made. What happened is that this
+    runner does not print a line in a shape Hullwork reads, and the exit code beside it is
+    unaffected.
+    """
+    if not summary.strip():
+        return "this runner prints no summary line Hullwork reads — the exit code is the claim"
+    return f"`{scrub.text(summary)}`"
+
+
 def issue_comment(
     item: Item,
     attempt: Attempt,
@@ -209,6 +325,8 @@ def issue_comment(
     secrets: list[str] | None = None,
     #: For the cost row (item 133).
     prices: "Prices | None" = None,
+    #: The headline, for a sequence with its own (item 179). See `pull_request_body`.
+    claim: str = "",
 ) -> str:
     """What goes on the issue when there is no pull request.
 
@@ -217,7 +335,7 @@ def issue_comment(
     only exists in a database is one nobody acts on.
     """
     scrub = _scrubber(secrets)
-    lines = [_claim(attempt), ""]
+    lines = [_claim(attempt, claim), ""]
     if detail:
         lines += [scrub.text(detail), ""]
     lines += [

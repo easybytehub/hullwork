@@ -920,6 +920,11 @@ def run_one(
     image_tag: str | None = None,
     base_sha: str | None = None,
     production_ref: str | None = None,
+    #: Which sequence to run in the box. `None` is `dispatch.dispatch`, the six steps. Item 179
+    #: passes `dispatch.refit`, which is three — and everything around it here is the same, which
+    #: is the point: the claim, the seal, the ceiling checks, publication and release are about an
+    #: attempt rather than about what the attempt was for.
+    sequence: object = None,
 ) -> Outcome:
     """Claim, dispatch, publish, record. The order is the whole design.
 
@@ -951,8 +956,9 @@ def run_one(
 
     try:
         box = box_factory(manifest)  # type: ignore[operator]
-        verdict = dispatch_module.dispatch(
-            session, item, manifest, engine,  # type: ignore[arg-type]
+        run = sequence or dispatch_module.dispatch
+        verdict = run(  # type: ignore[operator]
+            session, item, manifest, engine,
             box=box, attempt=attempt,
         )
     except dispatch_module.Abandoned as stop:
@@ -1263,7 +1269,10 @@ def publish(
     outcome = attempt.outcome
     try:
         if outcome not in (AttemptOutcome.PR_OPEN, AttemptOutcome.PR_OPEN_LINT_FAILED):
-            return _comment(forge, repo=repo, item=item, attempt=attempt, secrets=secrets)
+            return _comment(
+                forge, repo=repo, item=item, attempt=attempt, secrets=secrets,
+                claim=str(getattr(verdict, "claim", "")),
+            )
 
         branch = evidence.branch_name(item, attempt)
         try:
@@ -1300,6 +1309,10 @@ def publish(
             item, attempt, detail=str(getattr(verdict, "detail", "")),
             brief_text=brief_text, brief_evidence=brief_evidence, secrets=secrets,
             prices=prices,
+            # Item 179: a sequence whose claim is not the ordinary one carries its own, and both
+            # publishers read it from the same place so the page and the pull request cannot come
+            # to disagree about what was measured.
+            claim=str(getattr(verdict, "claim", "")),
         )
         pull = code_forge.open_draft_pull_request(  # type: ignore[attr-defined]
             repo,
@@ -1361,6 +1374,7 @@ def write_locally(root: Path) -> "Callable[[Item, Attempt, object], str | None]"
         (into / "artefact.md").write_text(
             evidence.pull_request_body(
                 item, attempt, detail=str(getattr(verdict, "detail", "")),
+                claim=str(getattr(verdict, "claim", "")),
             ),
             encoding="utf-8",
         )
@@ -1523,6 +1537,11 @@ def _attempt(
     secrets: list[str],
     rehearse_into: Path | None = None,
     local_checkout: "Checkout | None" = None,
+    #: The dependency upgrade this attempt is about, when it is one (item 179). It changes three
+    #: things and nothing else: which sequence runs, what the brief says, and what the artefact
+    #: can claim about the evidence the agent had. One parameter rather than three, because those
+    #: three have to agree and a caller that sets two of them has built a lie.
+    upgrade: object = None,
 ) -> Outcome:
     """Build one attempt's world, run the sequence in it, and take the world down again.
 
@@ -1531,6 +1550,7 @@ def _attempt(
     variable are how the second item in a run ends up dispatched into the first one's container.
     """
     from contextlib import ExitStack
+    from functools import partial
 
     from hullwork import dispatch as dispatch_module
     from hullwork import engine as engine_module
@@ -1643,11 +1663,40 @@ def _attempt(
 
         contract_dir = Path(tempfile.mkdtemp(prefix="hullwork-contract-"))
         stack.callback(shutil.rmtree, contract_dir, ignore_errors=True)
-        dispatch_module.build_brief_file(session, item, contract_dir)
-        brief_text = build_brief(session, item)
-        # Read from the same event the brief was built from, before the attempt runs — enrichment
-        # can happen while it does, and the artefact has to say what the agent *had* (item 100).
-        brief_evidence = brief_evidence_level(session, item)
+        sequence: object = None
+        if upgrade is None:
+            dispatch_module.build_brief_file(session, item, contract_dir)
+            brief_text = build_brief(session, item)
+            # Read from the same event the brief was built from, before the attempt runs —
+            # enrichment can happen while it does, and the artefact has to say what the agent
+            # *had* (item 100).
+            brief_evidence = brief_evidence_level(session, item)
+        else:
+            # Item 179. Everything below this block is untouched: same image, same gates, same
+            # seal, same publisher. What a refit replaces is what the agent is told and which
+            # sequence reads its work — the two halves that are about a bug rather than about an
+            # attempt.
+            from hullwork import refit as refit_module
+
+            brief_text = refit_module.brief(upgrade)  # type: ignore[arg-type]
+            dispatch_module.write_brief(brief_text, contract_dir)
+            # **Not `brief.evidence_level`**, which reads a `FetchedEvent` this item does not have
+            # and would answer "the issue title only — the tracker was never asked". That sentence
+            # exists to warn a reviewer that an attempt ran on almost nothing; here it would
+            # understate the best evidence this product produces (item 100's rule, held to).
+            brief_evidence = (
+                f"the upgrade, and the {len(brief_text.splitlines())}-line brief naming the tests "
+                f"your own suite failed on with it applied"
+            )
+            sequence = partial(
+                dispatch_module.refit,
+                package=upgrade.package,  # type: ignore[attr-defined]
+                to=upgrade.to,  # type: ignore[attr-defined]
+                guarded=upgrade.guarded,  # type: ignore[attr-defined]
+                version_now=lambda tree: refit_module.version_now(
+                    upgrade, tree  # type: ignore[arg-type]
+                ),
+            )
 
         # The gateway runs **in** the attempt's own network, not on this host (item 054). A
         # container on an `--internal` network cannot reach a listener on the host — measured on a
@@ -1750,6 +1799,7 @@ def _attempt(
             base_sha=checked_out.sha,
             production_ref=_production_ref(session, item),
             rehearsal=rehearsal,
+            sequence=sequence,
         )
         # The seal that was stored, not a third read of the journal. Two reads of a growing file are
         # two chances to print something the database does not say.
@@ -1844,7 +1894,8 @@ def _production_ref(session: Session, item: Item) -> str | None:
 
 
 def _comment(
-    forge: object, *, repo: str, item: Item, attempt: Attempt, secrets: list[str] | None
+    forge: object, *, repo: str, item: Item, attempt: Attempt, secrets: list[str] | None,
+    claim: str = "",
 ) -> str | None:
     """Say on the issue what happened, with the ingest credential rather than the code one.
 
@@ -1858,7 +1909,9 @@ def _comment(
         log.info("no issue to report to", extra={"item": item.id})
         return None
     number = int(item.forge_issue_ref.lstrip("#"))
-    body = evidence.issue_comment(item, attempt, detail=attempt.error or "", secrets=secrets)
+    body = evidence.issue_comment(
+        item, attempt, detail=attempt.error or "", secrets=secrets, claim=claim
+    )
     forge.comment(repo, number, body)  # type: ignore[attr-defined]
     log.info("commented on the issue", extra={"item": item.id, "issue": number})
     return item.forge_issue_ref

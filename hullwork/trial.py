@@ -255,6 +255,17 @@ def run(
         if refusal:
             raise work.WiringError(refusal)
 
+    # **Before the ephemeral database and before any image** (item 191). Every agent path starts a
+    # gateway, and `try` is the door the README sends a stranger to first — so it must not be the
+    # one that discovers a missing image at the most expensive moment. Same placement as the base
+    # image refusal above, and for the same reason.
+    from hullwork.sandbox.net import why_the_gateway_cannot_start
+
+    if manifest.autofix.agent != "none":
+        missing = why_the_gateway_cannot_start()
+        if missing:
+            raise work.WiringError(missing)
+
     session = ephemeral_session()
     project, item = stage(session, manifest, trace, repo=checkout.name)
     if item.state is ItemState.WAITING_APPROVAL and approve:
