@@ -49,6 +49,14 @@ STALE_AFTER = timedelta(hours=3)
 #: A clone that has not finished by now is a repository too large for one attempt to be worth it.
 CLONE_TIMEOUT_SECONDS = 600
 
+#: Counting is not dispatching. `eligible` takes a limit because it hands work out one item at a
+#: time; a count that stopped at the first would report `1 item(s) are ready` for ever.
+_EVERY_READY_ITEM = 10_000
+
+#: Where the credential question can actually be answered, in the deployment shape this ships.
+#: Deliberately the same sentence `doctor` gives, because it is the same wrong place to be standing.
+WHERE_TO_ASK_THE_DISPATCHER = "`docker compose exec dispatcher hullwork doctor`."
+
 #: Attributed to the tool, not to a person. A plausible human identity on these commits would
 #: imply somebody reviewed them, which is the claim the whole product exists not to make.
 #: `.invalid` is reserved by RFC 6761 precisely so an address can be honest about not being one.
@@ -793,8 +801,45 @@ def give_up_publishing(session: Session, attempt: Attempt, *, why: str) -> None:
     )
 
 
+def _a_dispatcher_is_alive(session: Session) -> bool:
+    """Whether some other process is holding the lease and renewing it.
+
+    The same test `doctor.not_from_here` makes, and it has to fail the same way: asking the lease is
+    asking the database, and this runs where the database may have no tables. Cannot tell → not
+    alive → nothing is downgraded, because a false silence is worse than a false alarm.
+    """
+    from hullwork import lease
+
+    try:
+        state, _ = lease.state(session)
+    except Exception:  # any failure here means "cannot tell", whatever its class
+        return False
+    return state == "alive"
+
+
+def ready_for_the_dispatcher(
+    session: Session, *, tracker_configured: bool = False
+) -> list[Eligible]:
+    """Everything the dispatcher would attempt, rather than everything that looks ready.
+
+    **One question, one answer** (item 193). `readiness_notes` used to select on state and lane,
+    and `eligible` applies six conditions; the two were written apart and drifted by four of them.
+    On the live instance that made `status` count an item belonging to an **inactive** project, and
+    then name a missing credential as the reason nobody had picked it up.
+
+    Adding the missing condition to the second query would have re-created the defect with a longer
+    fuse, so there is no second query. The limit exists only because `eligible` takes one — counting
+    is not dispatching, and a count that stops at the first item is not a count.
+    """
+    return eligible(session, limit=_EVERY_READY_ITEM, tracker_configured=tracker_configured)
+
+
 def readiness_notes(
-    session: Session, *, code_token_configured: bool, forge: object | None = None
+    session: Session,
+    *,
+    code_token_configured: bool,
+    forge: object | None = None,
+    tracker_configured: bool = False,
 ) -> list[Note]:
     """What `hullwork status` should say about the dispatcher half.
 
@@ -810,17 +855,37 @@ def readiness_notes(
     against what the models declare.
     """
     notes: list[Note] = []
-    ready = session.execute(
-        select(Item).where(Item.state == ItemState.READY, Item.lane != Lane.RED)
-    ).scalars().all()
+    ready = ready_for_the_dispatcher(session, tracker_configured=tracker_configured)
     in_progress = session.execute(
         select(Item).where(Item.state == ItemState.IN_PROGRESS)
     ).scalars().all()
 
-    if ready and not code_token_configured:
+    if ready and not code_token_configured and _a_dispatcher_is_alive(session):
+        # **Whose resource is it** (item 193). This process is the receiver, and DR-0005 requires
+        # the receiver not to hold the code token — so its own environment says nothing about the
+        # process that does. Measured live: this printed `nothing will ever pick them up` while the
+        # dispatcher's own doctor printed `ok code token → hullwork`.
+        #
+        # Not silence either. The question is real and the operator is the one who can go and ask
+        # it, so it is reported as unanswerable from here, with where to ask — which is what
+        # `doctor` has done since item 105 and this sentence never learnt.
+        notes.append(
+            Note(
+                f"{len(ready)} item(s) are ready to attempt. Whether the dispatcher can publish "
+                f"them cannot be answered from here: HULLWORK_FORGE_CODE_TOKEN is not set in this "
+                f"process, and a dispatcher is running, so this is a resource it holds rather than "
+                f"one this process does. Ask it: {WHERE_TO_ASK_THE_DISPATCHER}"
+            )
+        )
+    elif ready and not code_token_configured:
         # A degradation, not a note. Items only reach `ready` when a manifest names an agent, so
         # this state means somebody configured one and never gave the dispatcher a credential —
         # work that will sit there for ever while everything reports fine.
+        #
+        # **With no dispatcher alive nothing is downgraded**, which is `doctor.py`'s rule word
+        # for word: the absence of one is exactly when somebody needs to know what is missing. It
+        # is also the shape `hullwork work` itself runs in, where the credential is genuinely this
+        # process's business and the exit code has to stay 1.
         notes.append(
             Note(
                 f"{len(ready)} item(s) are ready to attempt and HULLWORK_FORGE_CODE_TOKEN is not "
@@ -866,9 +931,9 @@ def readiness_notes(
     # before the dispatcher does, which is the difference between a warning and a post-mortem.
     if forge is not None and ready:
         stranded = [
-            item.forge_issue_ref
-            for item in ready
-            if item.forge_issue_ref and not _issue_resolves(forge, item)
+            candidate.item.forge_issue_ref
+            for candidate in ready
+            if candidate.item.forge_issue_ref and not _issue_resolves(forge, candidate.item)
         ]
         if stranded:
             notes.append(

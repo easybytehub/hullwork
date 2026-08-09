@@ -163,16 +163,37 @@ anybody pinning either, and the bug report arrives months later from somebody wh
 **Then, once the image is public**, and in this order, because each step needs the one before it:
 
 ```bash
-./scripts/record-the-published-surface.py    # asks the new image what it accepts
+./scripts/record-the-published-surface.py 0.1.0aN   # the tag you just released — pass it
 # move the pins: README.md, docker-compose.yml, docs/install.md, PRIVACY.md
 ```
 
+**Pass the tag.** With no argument the script reads the pin from `docker-compose.yml`, and at this
+point in the order that pin is still the *previous* release — so the bare command asks the old image
+and re-records the surface it already had. It says which tag it asked, and that line is the only
+thing that distinguishes the no-op from the work.
+
 That is what lets the documentation describe the new release — including anything held back for it,
 per [CONTRIBUTING](../CONTRIBUTING.md#documentation-describes-the-released-artefact-not-this-checkout).
-Skipping either half is not quiet: re-record without moving the pins and the pins disagree with the
-recording; move the pins without re-recording and they disagree the other way. Both fail
+
+Skipping either half is usually not quiet: re-record without moving the pins and the pins disagree
+with the recording; move the pins without re-recording and they disagree the other way. Both fail
 `tests/test_the_documentation_describes_the_published_artefact.py`, which is the whole point of
 storing the recording rather than trusting the sequence.
+
+> **One combination used to escape both**, found cutting `0.1.0a8`: run the recorder with no argument
+> *and* forget the pins, and everything still names the previous release, consistently. The gate
+> compared the two halves to each other, so agreeing on the wrong answer passed, and the release went
+> undocumented while every check stayed green.
+>
+> `tests/test_the_surface_is_not_behind_the_registry.py` closes it by asking the one question the
+> tree cannot answer about itself: **is an image published for the version this tree claims to be?**
+> If it is, the surface has to have been recorded from it. If it is not, the surface is allowed to
+> lag — which exempts the whole bump-to-release window by a fact rather than by a flag somebody has
+> to remember to clear.
+>
+> **So `main` goes red for the half hour between the release and the post-release commit.** That is
+> the intended behaviour and it is the to-do list: the published image really is newer than the
+> documented one until the two steps above are done.
 
 ## The private forge
 

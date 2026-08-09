@@ -2059,6 +2059,10 @@ def _cmd_status(
             session,
             code_token_configured=settings.forge_code_token is not None,
             forge=_status_forge,
+            # The dispatcher skips an item whose enrichment has not come back, and only when there
+            # is a tracker for it to come back from. Counting without this reports work as ready
+            # that the dispatcher would deliberately leave alone.
+            tracker_configured=bool(settings.tracker_url and settings.tracker_token),
         )
         # **Asked, not assumed** (item 129). `readiness._forge_state` is module state in whichever
         # process last spoke to the forge; this is a different process from the receiver, so
