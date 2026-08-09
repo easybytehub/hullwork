@@ -12,17 +12,18 @@ each claim is part of the claim.
 > | signal | oracle | state |
 > |---|---|---|
 > | a production error | a test that fails first and passes after | **released**, and everything below describes it |
-> | a dependency advisory | your own suite, run against the upgrade | **built and unreleased** — in no image you can pull |
+> | a dependency advisory | your own suite, run against the upgrade | **released in `0.1.0a8`** — `hullwork deps`, and it refuses far more than it verifies |
 > | a static finding | a test naming the hostile input | does not exist |
 >
-> The second row is work items 172–180. Its command is deliberately **not named here**: the guard on
-> this repository's documentation refused the sentence that named it, and it was right to — a command
-> a reader cannot run is an invitation to type it and be told it does not exist. What is actionable
-> is the state, and the state is *not in an image you can pull*.
+> The second row is work items 172–180. Until `0.1.0a8` this page named its state and deliberately
+> **not its command**, because a command a reader cannot run is an invitation to type it and be told
+> it does not exist. It is nameable now for exactly one reason: it is in an image you can pull.
 >
-> This page will keep saying so until a release contains it: documentation describes the released
-> artefact, not the working tree (`CONTRIBUTING.md`, and item 165 records the three times that rule
-> was learnt the hard way).
+> Whether it is *worth* anything is a separate question from whether it exists, and the honest answer
+> is measured. On four real third-party repositories before release: **one clean verdict.** The rest
+> could not be measured at all — a suite that reaches the network, a pin in a file the image does not
+> install from, an image the project brings ready-made — and each was reported as that, with the
+> reason. The ratio is the feature. A tool that answered all four would be lying about three.
 
 ## What works today
 
@@ -59,14 +60,12 @@ its suite runs against a blank one per phase. That path has been exercised by **
 
 ## What does not exist yet
 
-- **Only the GlitchTip webhook route is enabled in a release.** Sentry's is **built and unreleased**
-  as of 2026-08-09 (item 189): in the working tree it is authenticated by the token in the URL — the
-  same credential GlitchTip has, checked the same way, because GlitchTip cannot sign at all. Its
-  signature is deliberately not verified; that would need Sentry's client secret held in reversible
-  form, which is a storage decision this project has not made.
-
-  The image you can pull still answers `501` there, and this page will say so until a release
-  carries it — the same rule as the dependency signal above, and for the same reason.
+- **Sentry's webhook route is enabled since `0.1.0a8`, and its signature is not verified.** It is
+  authenticated by the token in its URL — the same credential a GlitchTip route has, checked the same
+  way, because GlitchTip cannot sign its webhooks at all. Verifying Sentry's signature would need its
+  client secret held in reversible form, which is a storage decision this project has not made. So:
+  anyone who obtains the URL can post to it. Treat it as a secret, and `hullwork projects
+  rotate-secret` replaces it.
 - **Of the notification channels, only `none` and `console` deliver.** `telegram` and `email` parse in
   the manifest and are refused at delivery, because a transport nobody has exercised is a transport
   whose first real run happens in front of a user.
