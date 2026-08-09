@@ -219,13 +219,36 @@ _TEST_PATH = re.compile(r"^[A-Za-z0-9._/-]{1,128}$")
 
 
 class AutofixConfig(_Strict):
-    """How, and whether, an agent may attempt a fix.
+    """What Hullwork may do to this repository. **The permissions block**, and it is named after
+    one feature for historical reasons (DR-0019).
 
     `agent: none` is the default (DR-0002): the pipeline is fully useful with no external model
     call, and attempting fixes is what you opt into.
+
+    **Every other block in this manifest describes what your project *is*** — the image, the test
+    command, the linter, where things live. This one describes what is *permitted*, and DR-0019 is
+    where that distinction was finally written down. The name stays `autofix` because a manifest
+    field is a public interface and every existing file would break for a better word.
     """
 
     agent: str = NO_AGENT
+
+    #: Whether a verified-green dependency upgrade may be opened as a pull request here. DR-0019.
+    #:
+    #: **The first thing a project can refuse while Hullwork is perfectly able to do it**, and the
+    #: reason it exists is the gap item 186 could report and not close: until this field, declaring
+    #: an installer and a lock file *was* consenting to pull requests in your repository. Nobody
+    #: said so. That is the sentence this product already applies to lanes — *a policy nobody has
+    #: read is a policy nobody has agreed to* — pointed at itself.
+    #:
+    #: **False by default**, because every other default in this block is the refusing one and a
+    #: permission that arrives switched on is not a permission.
+    #:
+    #: DR-0019's rule for whether a feature gets a switch at all: *could a project have the
+    #: capability, understand the feature, and rationally not want it?* Applied to everything that
+    #: exists today it yields this field and nothing else — reading a lock file writes nothing,
+    #: verification runs on the operator's host, and both agent paths are already gated by `agent`.
+    open_upgrades: bool = False
 
     @field_validator("agent")
     @classmethod

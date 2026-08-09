@@ -4,7 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hullwork"
-description = "From production errors to reviewable pull requests, on your own infrastructure."
+# **Rewritten 2026-08-09 (item 181).** What it said before named one signal's two endpoints, offered
+# in the first line PyPI shows — where a reader decides what this is, and answering a narrower
+# question than the product does. `docs/what-hullwork-is.md` is the canonical statement and this is
+# its one-line form. The previous wording is in item 181 and in the commit that changed it; it is
+# deliberately not quoted here, because the guard that keeps it out of published documents is a
+# plain text search and a guard that has to be clever is a guard nobody trusts.
+description = "Verifies which of the things your tools claim are actually true, before a person is asked. Self-hosted."
 readme = "README.md"
 # **Narrowed 2026-08-04, because the wider range was a claim this project did not meet.**
 # 3.13 and 3.14 are red: `filterwarnings = ["error"]` turns unclosed SQLite connections into

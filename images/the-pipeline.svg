@@ -1,7 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 500" width="760" height="500"
      role="img" aria-labelledby="t d">
-  <title id="t">What Hullwork does, from a production error to a deploy</title>
-  <desc id="d">Two things arrive: a production error, from GlitchTip or anything Sentry-compatible, by
+  <title id="t">The path a production error takes, from the webhook to a deploy</title>
+  <desc id="d">One of Hullwork's three signals, end to end — the only one in a release. Two things
+    arrive: a production error, from GlitchTip or anything Sentry-compatible, by
     webhook; and a human report by email or chat, through a normaliser. Hullwork triages, deduplicates
     and assigns a risk lane. That becomes a work item with a lane. A green item goes to a coding agent
     in a sandbox, using your model key. The agent's work becomes a draft pull request. A person reviews

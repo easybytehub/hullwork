@@ -54,6 +54,7 @@ PUBLISHED = (
     "docs/install.md",
     "docs/releasing.md",
     "docs/status.md",
+    "docs/what-hullwork-is.md",
 )
 
 def _withheld() -> set[str]:
@@ -297,3 +298,57 @@ def test_every_environment_variable_named_in_the_documents_exists(document: str)
     }
 
     assert not (written - real), f"{document} names settings that do not exist: {written - real}"
+
+
+#: The sentence `docs/what-hullwork-is.md` names as partial, and the reason it is. Item 181.
+#:
+#: **Matched case-insensitively, and the first version of this was not.** It missed the instance
+#: that mattered most: line 1 of `README.md`, the banner's alt text, which begins with a lowercase
+#: *from* because it continues a sentence. That is the first line a screen reader announces and what
+#: renders when the image does not load — so the guard passed while the very first words of the page
+#: still said the thing it exists to keep out.
+#:
+#: It is not wrong — it is one signal's endpoints, offered where a reader is deciding what this is.
+#: The canonical page puts it plainly: *"None of them are wrong. All of them are partial."* A
+#: description that answers a narrower question than the product does is a description that selects
+#: the wrong readers, and this is the one sentence PyPI shows.
+THE_PIPELINE_SENTENCE = "From production errors to reviewable"
+
+#: The hand-written image sources. Globbed rather than listed, because unlike a document an image is
+#: never *deliberately* exempt from saying what the product is — there is no equivalent of the
+#: withheld-document case here, so a new one should be bound the moment it is added.
+IMAGES = tuple(sorted(str(p.relative_to(ROOT)) for p in (ROOT / "images").glob("*.svg")))
+
+
+def test_no_published_document_describes_the_product_by_its_plumbing() -> None:
+    """Item 181's falsifiable gate, the half that can be run.
+
+    **Failing when it was written**, which is what made it a gate rather than a decoration:
+    `pyproject.toml` carried the sentence as its `description`, so it was the first thing PyPI
+    showed and the first thing a reader met.
+
+    **The images are checked too, and the first version of this said they could not be.** It called
+    them "rendered assets" whose text a guard would trip over on a re-export. That was true of
+    `social-preview.png` and false of every SVG in `images/`: those are hand-written source, with
+    their own comments explaining their own layout, so a text search over them is exactly as stable
+    as one over Markdown. The PNG has no text a guard can read — it is covered instead by being
+    generated from `social-preview.svg` by `scripts/render-social-preview.sh`, both committed.
+
+    Alt text counts, and it is where this guard first failed: line 1 of the README is the banner's
+    alternative text, which is what a screen reader announces and what renders when the image does
+    not load.
+    """
+    carrying = [
+        name
+        for name in (*PUBLISHED, "pyproject.toml", *IMAGES)
+        if THE_PIPELINE_SENTENCE.lower() in _text(name).lower()
+        # The canonical page *quotes* the sentence in order to name it as partial, which is the
+        # opposite of using it. Exempted by name rather than by a cleverer matcher: one exemption
+        # anybody can read beats a rule nobody can.
+        and name != "docs/what-hullwork-is.md"
+    ]
+
+    assert carrying == [], (
+        f"{carrying} describe Hullwork by one signal's endpoints. "
+        f"docs/what-hullwork-is.md says what it is; these have not caught up."
+    )

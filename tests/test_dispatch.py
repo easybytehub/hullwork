@@ -449,6 +449,58 @@ def test_a_deleted_conftest_is_restored(session: Session, item: Item, tmp_path: 
     assert "tests/conftest.py" in verdict.detail
 
 
+def test_a_conftest_the_fix_invented_is_caught_too(
+    session: Session, item: Item, tmp_path: Path
+) -> None:
+    """The hole in item 046, found while building item 179 and measured on this sequence.
+
+    **The guard iterated the before-image**, so it restored configuration that was *edited* and
+    never saw configuration that was *invented*. A project with no `conftest.py` — which is most of
+    them — could have one written by the fix phase: absent from `pristine`, never restored,
+    `restored` empty so no second gate ran, and the attempt published as `pr-open` with the file
+    that decided the gate inside its own diff. Verified by removing `created_test_config` from
+    `_restore_infrastructure`, at which point this publishes.
+
+    The third verb, after edited and deleted, and the one nothing here expressed: **created**.
+    """
+    # Deliberately no `_with_conftest`: the premise is a project that has none.
+    verdict, _, _ = _go(
+        session, item, tmp_path,
+        # baseline green, red gate red, green gate green (nothing collected), restored gate red.
+        script={"pytest#1": 1, "pytest#3": 1, REPRO: 0, FIX: 0},
+        writes={REPRO: GOOD_TEST, FIX: {"conftest.py": "collect_ignore_glob = ['*']\n"}},
+    )
+
+    assert verdict.outcome is AttemptOutcome.FAILED
+    assert verdict.phase is AttemptPhase.GREEN_GATE_RESTORED
+    assert "conftest.py" in verdict.detail
+    assert "conftest.py" not in verdict.changes.written
+    assert not (tmp_path / "conftest.py").exists(), "there is nothing to put it back to"
+
+
+def test_a_test_the_fix_invented_is_still_welcome(
+    session: Session, item: Item, tmp_path: Path
+) -> None:
+    """The distinction the narrower predicate exists to keep.
+
+    A new file under `tests/` is a test and a fix that adds one is welcome; a new `conftest.py` is
+    configuration and there is no legitimate version of a fix phase inventing one. Using
+    `is_test_infrastructure` for the created case would have deleted both.
+    """
+    verdict, _, _ = _go(
+        session, item, tmp_path,
+        script={"pytest#1": 1, REPRO: 0, FIX: 0},
+        writes={
+            REPRO: GOOD_TEST,
+            FIX: {"src.py": "x = 2\n", "tests/test_new.py": "def test_new():\n    pass\n"},
+        },
+    )
+
+    assert verdict.outcome is AttemptOutcome.PR_OPEN
+    assert verdict.restored == ""
+    assert "tests/test_new.py" in verdict.changes.written
+
+
 # --- the agent is told what its test will be judged by (item 064) ---------------------------------
 
 

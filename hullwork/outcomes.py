@@ -322,3 +322,174 @@ def review_lines(counted: Reviewed) -> list[str]:
         median = ordered[len(ordered) // 2]
         out.append(f"median time from first error to decision: {spoken(median)}")
     return out
+
+
+#: Attempt outcomes that put a **verdict the gates produced** behind an item. Item 183, DR-0017.
+#:
+#: The two refusals belong here and that is the decision's second consequence, not a rounding: *"I
+#: could not verify this" is a first-class result*, and a reasoned refusal with the runs attached is
+#: what this product promises to deliver where nobody else does. What is excluded is everything that
+#: says nothing about the claim — `abandoned` because the infrastructure got in the way,
+#: `baseline-red` because the project's own suite stopped it before a model was called,
+#: `already-fixed` because it is a fact about a deployment.
+LEFT_WITH_EVIDENCE: frozenset[AttemptOutcome] = frozenset(
+    {
+        AttemptOutcome.PR_OPEN,
+        AttemptOutcome.PR_OPEN_LINT_FAILED,
+        AttemptOutcome.FAILED,
+        AttemptOutcome.NOT_REPRODUCIBLE,
+    }
+)
+
+#: The two of those that carry a change somebody can merge. The rest are refusals, and the split is
+#: printed rather than totalled — see `desk_lines`.
+CARRIED_A_CHANGE: frozenset[AttemptOutcome] = frozenset(
+    {AttemptOutcome.PR_OPEN, AttemptOutcome.PR_OPEN_LINT_FAILED}
+)
+
+#: States that mean Hullwork put this on somebody's desk rather than taking it off. Item 183.
+#:
+#: **The row `Funnel` cannot have**, and the reason this count exists. DR-0017's Context says the
+#: first half of the pipeline is a *cost* to the buyer — *"a team of three to ten with Sentry has no
+#: detection problem; it has more issues than it can serve. The opening move of the product adds to
+#: the pile."* An item nobody may attempt is exactly that, and a number that cannot express it is a
+#: number that flatters.
+HANDED_OVER: frozenset[ItemState] = frozenset({ItemState.HUMAN_ONLY, ItemState.REJECTED})
+
+
+@dataclass
+class Desk:
+    """How much of what arrived left a person's desk with evidence attached. Item 183, DR-0017.
+
+    **The denominator is the whole point.** `Funnel`'s is `fair_try` — attempts that spent an item's
+    one try — so every question it can answer has the shape *of the attempts we made, how did they
+    go*. That is the "how many bugs did it fix" number in a more careful coat, and DR-0017's third
+    consequence names it as the one being replaced. This one counts **what arrived**, which is a
+    different question with a much worse available answer.
+    """
+
+    #: Claims that arrived. Every item is one, whatever became of it.
+    arrived: int = 0
+    #: Items with a verdict the gates produced behind them.
+    left_with_evidence: int = 0
+    #: …of those, the ones carrying a change. The remainder are refusals, and both are printed.
+    with_a_change: int = 0
+    with_a_refusal: int = 0
+    #: Still in the queue, including anything whose attempt was abandoned and went back.
+    still_waiting: int = 0
+    #: **Put on** a person's desk: red lane, or a pull request a human read and refused.
+    handed_over: int = 0
+    #: Attempted and not finished. Neither, and saying so costs one word (`Funnel`'s rule).
+    running: int = 0
+
+    def as_dict(self) -> dict[str, object]:
+        """For `--json`. No ratio and no percentage, for `Funnel.as_dict`'s reason: an operator who
+        wants one computes it from parts they can see, and six samples do not carry that precision.
+        """
+        return {
+            "arrived": self.arrived,
+            "left_with_evidence": self.left_with_evidence,
+            "with_a_change": self.with_a_change,
+            "with_a_refusal": self.with_a_refusal,
+            "still_waiting": self.still_waiting,
+            "handed_over": self.handed_over,
+            "running": self.running,
+        }
+
+
+def desk(session: Session) -> Desk:
+    """Count what became of every claim that arrived. Item 183.
+
+    **By the attempt trail and never by the item's state**, which is the one thing here that could
+    be got wrong quietly. `done` is reached both by a merged pull request and by a person fixing
+    their own bug and closing the issue, and there is no state history to separate them — so an item
+    counted by state would have this product claiming credit for somebody else's afternoon.
+
+    One pass over two tables rather than a query per bucket: this runs inside `status`, which an
+    operator types when something is already wrong.
+    """
+    verdicts = session.execute(
+        select(Attempt.item_id, Attempt.outcome, Attempt.rehearsal).where(
+            Attempt.outcome.is_not(None)
+        )
+    ).all()
+
+    settled: dict[int, AttemptOutcome] = {}
+    started: set[int] = set()
+    for item_id, outcome, rehearsal in verdicts:
+        if rehearsal:
+            # It publishes nothing, so no forge state and nobody's queue moved. `Funnel` keeps
+            # rehearsals out of every number for the same reason.
+            continue
+        started.add(item_id)
+        # The best verdict an item ever got, so a second attempt that abandoned cannot take an
+        # earned one away. Items get one attempt (DR-0003), and this is what makes that assumption
+        # visible rather than relied on.
+        if outcome in LEFT_WITH_EVIDENCE and settled.get(item_id) not in LEFT_WITH_EVIDENCE:
+            settled[item_id] = outcome
+
+    running = {
+        item_id
+        for (item_id,) in session.execute(
+            select(Attempt.item_id).where(
+                Attempt.outcome.is_(None), Attempt.rehearsal.is_(False)
+            )
+        ).all()
+    } - started
+
+    counted = Desk()
+    for item_id, state in session.execute(select(Item.id, Item.state)).all():
+        counted.arrived += 1
+        outcome = settled.get(item_id)
+        if outcome is not None:
+            counted.left_with_evidence += 1
+            if outcome in CARRIED_A_CHANGE:
+                counted.with_a_change += 1
+            else:
+                counted.with_a_refusal += 1
+        elif item_id in running:
+            counted.running += 1
+        elif state in HANDED_OVER:
+            counted.handed_over += 1
+        else:
+            counted.still_waiting += 1
+    return counted
+
+
+def desk_lines(counted: Desk) -> list[str]:
+    """The number DR-0017 signed for, in words. Empty when nothing has arrived.
+
+    **Nothing here is phrased as an achievement**, and the row for what was *added* to a desk least
+    of all: it is the one line in this product that can embarrass it, and rounding it into good news
+    is exactly how it would stop doing that.
+
+    Zeros are not printed. An instance whose claims have all cleared says so with one line, and an
+    instance that has cleared none says *that* — which is not the same fact as a row of noughts, and
+    is the state every instance starts in.
+    """
+    if not counted.arrived:
+        return []
+
+    said = [f"{counted.arrived} claim(s) have arrived"]
+    if counted.left_with_evidence:
+        how = []
+        if counted.with_a_change:
+            how.append(f"{counted.with_a_change} with a change")
+        if counted.with_a_refusal:
+            how.append(f"{counted.with_a_refusal} with a reasoned refusal and the runs behind it")
+        said.append(
+            f"{counted.left_with_evidence} left your desk with evidence attached: " + ", ".join(how)
+        )
+    else:
+        said.append("none of them has left your desk with evidence attached yet")
+    if counted.still_waiting:
+        said.append(f"{counted.still_waiting} are still in the queue")
+    if counted.running:
+        said.append(f"{counted.running} are being attempted now, which is neither")
+    if counted.handed_over:
+        # Said plainly, and this is the sentence DR-0017's Context is about.
+        said.append(
+            f"{counted.handed_over} went onto your desk rather than off it: red lane, or a pull "
+            f"request somebody read and refused"
+        )
+    return said

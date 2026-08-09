@@ -19,6 +19,7 @@ Every test here was verified by reintroducing the defect it covers.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -308,3 +309,199 @@ def test_a_proposal_never_names_an_agent() -> None:
             parse_manifest(rendered)
         except ManifestError as exc:  # pragma: no cover - a failure here is the point
             pytest.fail(f"the proposal for {text[:24]!r} is not a manifest: {exc}")
+
+
+# --- Which forge holds this. Item 171. -------------------------------------------------
+#
+# The defect: `render` emitted `provider: forgejo` as a constant, uncommented, so it read
+# as observed while no code path could produce any other value. Found by running the
+# command against a checkout hosted on GitHub and reading the two lines it printed.
+
+
+def test_the_remote_host_decides_when_it_is_one_that_can_be_recognised() -> None:
+    """`github.com` and `gitlab.com` are the only hosts that name themselves.
+
+    Everything else is self-hosted and unresolvable without asking it, which `propose`
+    may never do — it reaches nothing and needs no credential.
+    """
+    assert propose.forge_for(".github/workflows/ci.yml", "github.com").provider == "github"
+    assert propose.forge_for(".gitlab-ci.yml", "gitlab.com").provider == "gitlab"
+
+
+def test_the_github_workflows_directory_is_not_evidence_of_github() -> None:
+    """**The finding that stops this being a one-line change.**
+
+    Forgejo Actions and Gitea Actions both read `.github/workflows/`, and this repository's
+    own deployment is the proof — those workflows run on a Forgejo instance. Reading that
+    directory as GitHub would be wrong for exactly the self-hosted projects this is for.
+
+    This test exists to fail if somebody later "improves" the mapping.
+    """
+    guess = propose.forge_for(".github/workflows/ci.yml", "git.example.com")
+    assert guess.evidence is None, "that directory settles nothing on an unknown host"
+    assert guess.provider == propose.PROVIDER_WHEN_UNDECIDED
+
+
+def test_the_ci_location_decides_when_the_host_cannot() -> None:
+    """A self-hosted host says nothing; the three unambiguous directories say plenty."""
+    for source, expected in (
+        (".forgejo/workflows/ci.yml", "forgejo"),
+        (".gitea/workflows/ci.yml", "gitea"),
+        (".gitlab-ci.yml", "gitlab"),
+    ):
+        guess = propose.forge_for(source, "git.example.com")
+        assert guess.provider == expected, source
+        assert guess.evidence is not None
+
+
+def test_the_host_outranks_the_ci_location() -> None:
+    """Where the repository lives beats which runner reads its workflows.
+
+    A GitHub repository whose workflows sit in `.forgejo/workflows/` is a mirror, and the
+    coordinate a manifest needs is the one that answers requests.
+    """
+    assert propose.forge_for(".forgejo/workflows/ci.yml", "github.com").provider == "github"
+
+
+def test_a_remote_url_gives_up_its_host_in_both_spellings() -> None:
+    """`https://` and the `git@host:owner/name` form, plus what is not a URL at all."""
+    assert propose.host_of_remote("https://github.com/owner/repo.git") == "github.com"
+    assert propose.host_of_remote("git@github.com:owner/repo.git") == "github.com"
+    assert propose.host_of_remote("ssh://git@forge.example.com/o/r") == "forge.example.com"
+    assert propose.host_of_remote(None) is None
+    assert propose.host_of_remote("not a url") is None
+
+
+def test_an_undecided_provider_says_so_instead_of_looking_read() -> None:
+    """The whole point of the item: a default must not wear the costume of a reading.
+
+    `render`'s contract is that uncommented means observed. When nothing decided, the line
+    still has to carry a value — `git.provider` is required and an unparseable proposal is
+    worse — so it carries the default *and says which two things would have settled it*.
+    """
+    rendered = propose.render(propose.read("a/b", ".github/workflows/ci.yml", WITH_A_CONTAINER))
+    lines = rendered.splitlines()
+    git_at = next(i for i, line in enumerate(lines) if line.startswith("git:"))
+
+    assert "provider: forgejo" in lines[git_at]
+    said_it = "\n".join(lines[max(0, git_at - 3) : git_at])
+    assert "default, not a reading" in said_it, "an undecided value has to admit that it is one"
+    assert ".github/workflows/" in said_it, "and say why that directory settled nothing"
+    parse_manifest(rendered)  # and it still parses, which is why the value stays
+
+
+def test_a_decided_provider_does_not_apologise_for_itself() -> None:
+    """The mirror of the test above: an observation must not read as a guess."""
+    proposal = propose.read("a/b", ".github/workflows/ci.yml", WITH_A_CONTAINER)
+    proposal.remote_host = "github.com"
+    rendered = propose.render(proposal)
+
+    assert "provider: github" in rendered
+    git_line = next(line for line in rendered.splitlines() if line.startswith("git:"))
+    assert "default" not in git_line
+    parse_manifest(rendered)
+
+
+def test_the_header_and_the_provider_can_never_contradict_each_other() -> None:
+    """The defect as a reader saw it: a header naming one forge's file, then another's name.
+
+    Asserted for the three locations that decide, on a host that decides nothing — which is
+    where the contradiction was reachable.
+    """
+    for source, text, expected in (
+        (".forgejo/workflows/ci.yml", WITH_A_CONTAINER, "forgejo"),
+        (".gitea/workflows/ci.yml", WITH_A_CONTAINER, "gitea"),
+        (".gitlab-ci.yml", GITLAB, "gitlab"),
+    ):
+        proposal = propose.read("a/b", source, text)
+        proposal.remote_host = "git.example.com"
+        rendered = propose.render(proposal)
+        header = rendered.splitlines()[0]
+        assert source in header
+        assert f"provider: {expected}" in rendered, f"{header} then a different forge"
+
+
+def test_the_command_itself_carries_the_host_to_the_proposal(tmp_path: Path) -> None:
+    """**The test the other eight did not make redundant**, and the reason it exists.
+
+    Every assertion above exercises pure functions. Deleting the one line in `cli.py` that
+    reads the remote and hands its host to the proposal left all of them green — so the whole
+    repair would have been reachable for deletion without a single test noticing, which is the
+    shape of defect item 116 found (a test that passes with its own subject removed).
+
+    This drives the command against a real checkout with a real `origin`, which is how the
+    defect was found in the first place.
+    """
+    from hullwork.cli import propose_from_local_ci
+
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(WITH_A_CONTAINER, encoding="utf-8")
+
+    for argv in (
+        ["init", "-q"],
+        ["add", "-A"],
+        ["remote", "add", "origin", "https://github.com/owner/thing.git"],
+    ):
+        done = subprocess.run(  # noqa: S603
+            ["git", "-C", str(tmp_path), *argv],  # noqa: S607
+            capture_output=True, text=True, check=False,
+        )
+        assert done.returncode == 0, done.stderr
+
+    rendered = propose_from_local_ci(tmp_path)
+    assert rendered is not None
+    assert "git: {provider: github, repo: owner/thing}" in rendered
+    parse_manifest(rendered)
+
+
+def test_a_proposal_with_no_installer_says_what_that_costs() -> None:
+    """Item 185. Every field this reader cannot fill carries a comment saying what is missing;
+    `install` carried none, and its absence is the one that is invisible.
+
+    **Because the manifest it produces parses and builds perfectly.** What it cannot do is measure a
+    dependency upgrade: with no installer the image is the base exactly as it comes, so rewriting a
+    pinned version changes nothing the suite runs against. Measured on 2026-08-09 (item 182) before
+    this comment existed — a checkout pinning `jinja2==2.4.1`, a base image carrying 3.0.0, and a
+    verdict reading *your suite passed before this change and passes after it*, about a version that
+    was never installed.
+    """
+    proposal = propose.Proposal(repo="o/r", source="ci.yml", base="python-3.12", tests="pytest")
+
+    text = propose.render(proposal)
+
+    assert "cannot be **measured**" in text
+    assert "changes nothing your suite would run against" in text
+    # **And what to do about it, which item 188 added.** Saying only the cost sent a reader with an
+    # image of their own away from a feature that serves them: `base` takes any image and `install`
+    # takes their own command, so the answer is one layer on top of what they already named — not a
+    # rebuild from scratch, and not a stack anybody has to add.
+    assert "keep this base and add two lines" in text
+    assert "one layer on top of the image you named" in text
+    # The command is not named: it is not in the published image, and naming something a reader
+    # cannot run invites them to type it and be told it does not exist.
+    assert "hullwork deps" not in text
+
+
+def test_a_proposal_that_names_an_installer_says_nothing_of_the_kind() -> None:
+    """The note is about an absence. A manifest that can measure must not carry a caveat it earned
+    nothing of — a warning printed for everybody is a warning nobody reads."""
+    proposal = propose.Proposal(
+        repo="o/r", source="ci.yml", base="python-3.12", tests="pytest",
+        install="pip", dependencies=("requirements.txt",),
+    )
+
+    text = propose.render(proposal)
+
+    assert "cannot be **measured**" not in text
+    assert "install: 'pip'" in text
+
+
+def test_a_proposal_with_no_base_does_not_lecture_about_installers() -> None:
+    """Without a base the whole `runtime` block is commented out and refused anyway (item 111).
+    Adding a second paragraph about a third field there is noise on top of a refusal."""
+    proposal = propose.Proposal(repo="o/r", source="ci.yml", tests="pytest")
+
+    text = propose.render(proposal)
+
+    assert "cannot be **measured**" not in text
