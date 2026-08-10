@@ -42,6 +42,22 @@ SCHEMA_VERSION = 1
 HUMAN_MERGE = "human-merge"
 
 
+#: What an unknown field's refusal adds, and it is a **hint rather than a diagnosis** (item 195).
+#: `SCHEMA_VERSION`'s docstring promised a manifest from the future would be refused clearly instead
+#: of producing this wall — but that path needs the file to *declare* the higher version, and
+#: `version:` is optional and nobody writes it. So the wall is what a project adopting a new field
+#: actually gets, and it says nothing about the possibility that the field is simply newer than the
+#: binary reading it.
+#:
+#: Added beside the field and never in place of it: **most unknown fields are typos**, and sending
+#: somebody to upgrade over a missing letter is a worse answer than the wall was.
+_MAY_BE_NEWER = (
+    "One of these may be a field from a newer Hullwork rather than a mistake: this build "
+    "understands schema {version}. If your project needs it, upgrade Hullwork; if it is a typo, "
+    "the name and value above are what it read."
+)
+
+
 class ManifestError(Exception):
     """The manifest is not usable. Carries every problem found, not just the first."""
 
@@ -49,7 +65,10 @@ class ManifestError(Exception):
         self.source = source
         self.problems = problems
         listed = "\n".join(f"  {problem}" for problem in problems)
-        super().__init__(f"{source} is not a valid Hullwork manifest:\n{listed}")
+        said = f"{source} is not a valid Hullwork manifest:\n{listed}"
+        if any("Extra inputs are not permitted" in problem for problem in problems):
+            said += "\n\n" + _MAY_BE_NEWER.format(version=SCHEMA_VERSION)
+        super().__init__(said)
 
 
 class _Strict(BaseModel):

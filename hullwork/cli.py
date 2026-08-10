@@ -2106,10 +2106,8 @@ def _cmd_status(
         findings = credentials.audit(
         session, make_permission_reader(settings), probe=_scope_probe(settings)
     )
-        compose = DEFAULT_COMPOSE_FILE if DEFAULT_COMPOSE_FILE.exists() else None
-        gaps = doctor.environment_gaps(
-            settings, env_file=DEFAULT_ENV_FILE, compose_file=compose
-        )
+        env_file, compose = where_the_deployment_files_are(settings)
+        gaps = doctor.environment_gaps(settings, env_file=env_file, compose_file=compose)
         payload = report.as_dict()
         payload["dispatcher_loop"] = {
             "state": loop_state,
@@ -2348,6 +2346,36 @@ DEFAULT_ENV_FILE = Path(".env")
 DEFAULT_COMPOSE_FILE = Path("docker-compose.yml")
 
 
+def where_the_deployment_files_are(
+    settings: Settings,
+    *,
+    env_file: str | None = None,
+    compose_file: str | None = None,
+) -> tuple[Path, Path | None]:
+    """The env file and the compose file `environment_gaps` should read, for every command.
+
+    **One question, one answer** (item 194, and item 193 the same day for the same reason). Item 144
+    added these settings so a containerised instance could point the check at the host's files —
+    inside a container the working directory holds neither, so it silently never ran on any real
+    deployment. That fix reached `doctor` and neither of the two call sites `status` uses, so on the
+    live instance the configured path was set, the file was mounted at it, and `status` printed *not
+    checked: no environment file at `.env`* — the default it never replaced.
+
+    Precedence is a person, then the machine, then the default: `--env-file` is the only place
+    somebody names the file by hand, and somebody standing in front of the machine outranks how it
+    was configured.
+
+    The compose falls back to the default **only when it exists**, because `None` there means *no
+    compose to compare against*, which is a different fact from *a compose that passes nothing on*.
+    """
+    resolved_env = Path(env_file or settings.deployment_env_file or DEFAULT_ENV_FILE)
+
+    named = compose_file or settings.deployment_compose_file
+    if named:
+        return resolved_env, Path(named)
+    return resolved_env, DEFAULT_COMPOSE_FILE if DEFAULT_COMPOSE_FILE.exists() else None
+
+
 def _cmd_doctor(
     args: argparse.Namespace, session: Session, settings: Settings, out: TextIO
 ) -> int:
@@ -2361,18 +2389,12 @@ def _cmd_doctor(
     Exit code is the answer, as everywhere else — and an `unknown` never sets it. That is item 073's
     lesson: a warning wired into an exit code with no action available to clear it is not a signal.
     """
-    # **Configuration before the working directory** (item 144). The flags still win, because
-    # somebody running this from a host shell knows where the files are. What changed is the
-    # fallback: it used to be the working directory, which inside a container holds neither file, so
-    # the check silently never ran on any real deployment. Now the instance can say where they are.
-    env_file = Path(
-        args.env_file or settings.deployment_env_file or DEFAULT_ENV_FILE
+    # **Configuration before the working directory** (item 144), and now in one place for all three
+    # commands (item 194) — this was the only one that had it, which is why `status` was reporting
+    # `not checked` on an instance that had configured everything the message asked for.
+    env_file, compose_file = where_the_deployment_files_are(
+        settings, env_file=args.env_file, compose_file=args.compose_file
     )
-    named_compose = args.compose_file or settings.deployment_compose_file
-    if named_compose:
-        compose_file: Path | None = Path(named_compose)
-    else:
-        compose_file = DEFAULT_COMPOSE_FILE if DEFAULT_COMPOSE_FILE.exists() else None
 
     code_forge = make_code_forge(settings)
     # The **ingest** credential for the inventory check: asking whether an issue still exists is a
@@ -2612,8 +2634,8 @@ def _report_environment(settings: Settings, out: TextIO) -> list["doctor.Finding
     `tracker configured: false` is true of this process and can be false of the machine, and that
     sentence is what sent somebody looking in the wrong place for a day.
     """
-    compose = DEFAULT_COMPOSE_FILE if DEFAULT_COMPOSE_FILE.exists() else None
-    gaps = doctor.environment_gaps(settings, env_file=DEFAULT_ENV_FILE, compose_file=compose)
+    env_file, compose = where_the_deployment_files_are(settings)
+    gaps = doctor.environment_gaps(settings, env_file=env_file, compose_file=compose)
     if not gaps:
         return []
     print("\n  Configuration that did not arrive:", file=out)

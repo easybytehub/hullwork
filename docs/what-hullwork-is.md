@@ -21,7 +21,7 @@ Every signal Hullwork accepts arrives from a tool that **asserts something and p
 |---|---|---|---|
 | a production error | Sentry, GlitchTip | *something broke* | a test that reproduces it |
 | a dependency advisory | Renovate, Dependabot, OSV | *this version is vulnerable* | the project's own suite |
-| a static finding | CodeQL, Opengrep | *this could be exploited* | a test naming the hostile input |
+| a static finding | CodeQL, Opengrep | *this could be exploited*, or *this code is dead* | a test naming the hostile input, or removing the code under coverage |
 
 Three signals, three oracles, **one mechanism**: take the claim into a sandbox, submit it to an
 oracle the agent cannot influence, return a verdict with the run attached.

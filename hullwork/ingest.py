@@ -365,6 +365,7 @@ def fetch_context(
     tracker: Tracker | None = None,
     limit: int = 20,
     recheck_after: int = 600,
+    forge: Forge | None = None,
 ) -> int:
     """Ask the tracker for the full error behind each item that has not got one yet (item 036).
 
@@ -403,14 +404,16 @@ def fetch_context(
         # `finally`, so a tracker that raises mid-pass does not cost the earlier items their
         # backoff.
         try:
-            if _fetch_one(session, tracker, item):
+            if _fetch_one(session, tracker, item, forge):
                 fetched += 1
         finally:
             session.commit()
     return fetched
 
 
-def _fetch_one(session: Session, tracker: Tracker, item: Item) -> bool:
+def _fetch_one(
+    session: Session, tracker: Tracker, item: Item, forge: "Forge | None" = None
+) -> bool:
     """Bring one item's context up to date. Returns whether anything was fetched.
 
     Extracted from the loop by item 083 so there is **one** place that commits. Five `continue`
@@ -458,10 +461,53 @@ def _fetch_one(session: Session, tracker: Tracker, item: Item) -> bool:
     if event is None:
         item.context_error = "the tracker no longer has this issue"
         return False
+    first_sample = not has_sample
     _store_context(session, item, event)
+    # **The half that reaches an issue already filed** (item 196). A body is written once, at
+    # creation, and on the live instance every issue predated its own enrichment by days — so
+    # putting the evidence in the body fixes the next issue and none of the existing ones.
+    #
+    # **Once per item, and `first_sample` is not what makes that true.** Measured by mutation:
+    # removing it changes nothing, because with a sample already stored both branches above return
+    # before reaching `_store_context`, so this line is reached at most once in an item's life.
+    # The term stays as a second lock on a door that is already shut — cheap, and the day
+    # `_fetch_one` learns to re-fetch, the alternative is a comment on every pass until somebody
+    # mutes the repository. It is defence, and it is labelled as defence rather than sold as the
+    # guarantee.
+    if first_sample and forge is not None and item.forge_issue_ref:
+        _post_the_evidence(session, forge, item)
     item.context_error = None
     _relane_now_that_we_know_where(session, item, event)
     return True
+
+
+def _post_the_evidence(session: Session, forge: "Forge", item: Item) -> None:
+    """Comment the evidence onto an issue that was filed before it arrived.
+
+    A failure here is logged and swallowed: enrichment is worth having whether or not the forge is
+    answering this minute, and the fetch that produced it must not be lost to a comment that could
+    not be posted. What is lost is the comment, and the body of the next issue still carries it.
+    """
+    project = item.project
+    stored = (
+        session.query(FetchedEvent)
+        .filter(FetchedEvent.item_id == item.id)
+        .order_by(FetchedEvent.id.desc())
+        .first()
+    )
+    if stored is None:  # pragma: no cover - defensive; the caller has just stored one
+        return
+    body = "\n".join(
+        ["Hullwork has the error's detail now, which arrived after this issue was filed.",
+         *_evidence_lines(stored, item.permalink)]
+    )
+    try:
+        forge.comment(project.repo, int(str(item.forge_issue_ref).lstrip("#")), body)
+    except (ForgeError, ValueError) as exc:
+        log.warning(
+            "could not post the evidence onto the issue",
+            extra={"item": item.id, "issue": item.forge_issue_ref, "error": str(exc)},
+        )
 
 
 def _relane_from_stored_sample(session: Session, item: Item) -> bool:
@@ -843,7 +889,7 @@ def sweep(
         # Last: it is the only step that is pure enrichment. An item is filed and reconciled
         # whether or not the tracker answers, and a tracker having a bad minute must not delay
         # the work that has a human waiting on it.
-        fetched = fetch_context(session, tracker, recheck_after=recheck_after)
+        fetched = fetch_context(session, tracker, recheck_after=recheck_after, forge=forge)
         # After enrichment, and last of all: DR-0011. The inventory is how an issue that never got a
         # webhook — because the tracker speaks once per issue for its whole life — arrives at all.
         # It goes here rather than in the dispatcher because it needs the ingest credential and
@@ -1004,7 +1050,83 @@ def _file(session: Session, forge: Forge, project: Project, item: Item) -> bool:
         return True
 
 
-def _issue_body(item: Item) -> str:
+#: How many frame locations an issue shows. `brief.py` shows the same number to the agent, and for
+#: the same reason: the innermost are the defect and the rest is the framework that called it.
+MAX_FRAMES_IN_AN_ISSUE = 8
+
+#: Said in the artefact, every time, rather than in a document somebody would have to go and find.
+#: Item 196's second criterion: what an issue leaves out is a decision the instance makes and can
+#: state, not a default nobody chose.
+WHAT_THE_ISSUE_LEAVES_OUT = (
+    "Locations only — **no variables**, and no source lines. A captured variable can hold a "
+    "credential and this body is republished into a repository; source lines go stale as the code "
+    "moves. The link above has both, from the tracker, under whatever access it already enforces."
+)
+
+
+def _where_it_happened(frames: list[dict[str, Any]]) -> list[str]:
+    """Frame locations, innermost last, as `module.function:lineno`.
+
+    Deliberately not `brief.py`'s renderer, which is right for the agent and wrong here: that one
+    includes `context_line`, because a model writing a reproducing test needs the failing source in
+    front of it. A person has the link.
+    """
+    said = []
+    for frame in frames[-MAX_FRAMES_IN_AN_ISSUE:]:
+        where = frame.get("module") or frame.get("filename") or frame.get("abs_path") or "?"
+        function = frame.get("function")
+        line = frame.get("lineno")
+        said.append(f"{where}.{function}:{line}" if function else f"{where}:{line}")
+    return said
+
+
+def _evidence_lines(event: "FetchedEvent | None", permalink: str | None) -> list[str]:
+    """What Hullwork knows about the error, for the person who has to decide about it.
+
+    **This existed and went only to the agent** (item 196). `brief.py` renders frames, the culprit
+    and whether locals were captured; `_issue_body` read the `Item` row alone and never touched the
+    enrichment sitting one table away. Measured on the live instance: two items whose issues carried
+    four rows of table and no link, untouched for four days, about the page crashing in production.
+    """
+    if event is None:
+        return [
+            "",
+            "The error's detail has **not arrived yet** — the tracker has not been asked, or could "
+            "not answer. That is different from there being none, and this line is here so it "
+            "cannot be read as the second.",
+            *(["", f"The error: {permalink}"] if permalink else []),
+        ]
+
+    said = ["", "## The error"]
+    if event.message:
+        said += ["", f"**{event.exception_type or 'Error'}**: {event.message}"]
+    elif event.exception_type:
+        said += ["", f"**{event.exception_type}**"]
+    if event.culprit:
+        said.append(f"In `{event.culprit}`.")
+
+    facts = [
+        (name, value)
+        for name, value in (
+            ("Release", event.release),
+            ("Environment", event.environment),
+            ("When", event.occurred_at.isoformat() if event.occurred_at else None),
+        )
+        if value
+    ]
+    if facts:
+        said += ["", "| | |", "|---|---|", *[f"| {name} | {value} |" for name, value in facts]]
+
+    where = _where_it_happened(event.frames or [])
+    if where:
+        said += ["", "Where it happened, innermost last:", "", *[f"- `{one}`" for one in where]]
+    if permalink:
+        said += ["", f"The error, in full: {permalink}"]
+    said += ["", WHAT_THE_ISSUE_LEAVES_OUT]
+    return said
+
+
+def _issue_body(item: Item, event: "FetchedEvent | None" = None) -> str:
     lines = [
         "Reported by Hullwork from a production error.",
         "",
@@ -1032,6 +1154,7 @@ def _issue_body(item: Item) -> str:
             "",
             f"Red lane: an agent will never touch this. Reclassify it in {where} if that is wrong.",
         ]
+    lines += _evidence_lines(event, item.permalink)
     lines += ["", marker_for(item.fingerprint), ""]
     return "\n".join(lines)
 

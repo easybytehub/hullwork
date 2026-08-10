@@ -194,6 +194,18 @@ def test_a_refusal_is_reported_beside_a_change_and_not_inside_a_total(
 
     *"I could not verify this" is a first-class result*, so a total that hides how much of the
     number it is would be the one place this product rounds its own honesty off.
+
+    **The assertions used to read the whole paragraph** — `"1" in said and "2" in said`, plus
+    `"refus" in said.lower()` — and deleting the split does fail them, on any fixture: the word is
+    what catches it, and the digits were redundant rather than load-bearing (item 195 measured that
+    the other way round first and was wrong).
+
+    Deleting the split is not the only way to lose the honest shape, though, and the other way looks
+    like tidying: keep both numbers and put them on **separate lines**, so the headline reads `3
+    left your desk with evidence attached` and `2 refusals` appears somewhere below it. Every old
+    assertion passes, and a reader who stops at the headline is not told that two of the three are
+    refusals — which is exactly what this test's name forbids. So it reads the sentence now, and
+    asserts the parts are behind the total rather than merely present in the same output.
     """
     _attempt(session, _item(session, project, ItemState.PR_OPEN), AttemptOutcome.PR_OPEN)
     _attempt(
@@ -201,15 +213,27 @@ def test_a_refusal_is_reported_beside_a_change_and_not_inside_a_total(
         AttemptOutcome.NOT_REPRODUCIBLE,
     )
     _attempt(session, _item(session, project, ItemState.FAILED, n=2), AttemptOutcome.FAILED)
+    # Queued work, so the paragraph carries other numbers — which is the ordinary case and the one
+    # the old assertions could not survive.
+    _item(session, project, ItemState.READY, n=3)
+    _item(session, project, ItemState.READY, n=4)
 
     desk = outcomes.desk(session)
 
     assert desk.left_with_evidence == 3
     assert desk.with_a_change == 1
     assert desk.with_a_refusal == 2
-    said = " ".join(outcomes.desk_lines(desk))
-    assert "1" in said and "2" in said
-    assert "refus" in said.lower()
+
+    line = next(one for one in outcomes.desk_lines(desk) if "left your desk" in one)
+
+    assert line.startswith("3 left your desk with evidence attached:"), (
+        f"the headline is not the total with its parts behind it: {line!r}"
+    )
+    assert "1 with a change" in line
+    assert "2 with a reasoned refusal" in line
+    # And the refusals are **behind** the total rather than instead of it: a reader who stops at the
+    # first number has not been told something false, only something less.
+    assert line.index("with a change") < line.index("reasoned refusal")
 
 
 def test_an_instance_that_attempted_nothing_says_so_in_words(

@@ -13,7 +13,7 @@ each claim is part of the claim.
 > |---|---|---|
 > | a production error | a test that fails first and passes after | **released**, and everything below describes it |
 > | a dependency advisory | your own suite, run against the upgrade | **released in `0.1.0a8`** — `hullwork deps`, and it refuses far more than it verifies |
-> | a static finding | a test naming the hostile input | does not exist |
+> | a static finding | a test naming the hostile input, or removing the code under coverage | **does not exist** — its shape is decided (DR-0020) and its build is not ordered |
 >
 > The second row is work items 172–180. Until `0.1.0a8` this page named its state and deliberately
 > **not its command**, because a command a reader cannot run is an invitation to type it and be told
