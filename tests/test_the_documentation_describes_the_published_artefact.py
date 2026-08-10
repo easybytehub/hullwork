@@ -259,6 +259,31 @@ def test_every_pin_names_the_version_the_surface_was_recorded_from() -> None:
     )
 
 
+#: A version that is not an image pin and still has to move with a release: what `PRIVACY.md` shows
+#: a reader we send about them. `PIN` cannot see it — there is no `ghcr.io/…:` in front of it — so
+#: the file appeared in `docs/releasing.md`'s list of pins to move and in no test at all. Item 192
+#: found it by reading that list rather than by anything failing.
+SAMPLE_RELEASE = re.compile(r'"release":\s*"(?P<tag>[\w.\-]+)"')
+
+
+def test_the_sample_payload_shows_the_version_it_would_really_carry() -> None:
+    """`PRIVACY.md` prints the exact JSON a crash report contains, and the promise it is making is
+    that this is what leaves the machine — *"a property of the repository you can check, rather than
+    a promise you have to accept"*, in that document's own words.
+
+    `release` is filled from `settings.release or __version__`, so a stale one shows somebody a
+    payload naming a version nobody runs, in the one document written to be audited by a stranger.
+    Cheap to keep true, and the whole file is worth nothing if a reader catches it being wrong.
+    """
+    shown = {found.group("tag") for found in SAMPLE_RELEASE.finditer(_text("PRIVACY.md"))}
+
+    assert shown, "PRIVACY.md no longer shows the payload, so nothing here is checking anything"
+    assert shown == {SURFACE["version"]}, (
+        f"PRIVACY.md shows a crash report carrying release {sorted(shown)} while the published "
+        f"image is {SURFACE['version']}. docs/releasing.md lists this file among the pins to move."
+    )
+
+
 def test_every_document_is_either_published_or_withheld() -> None:
     """A document added without a decision defaults to invisible, which is the wrong default.
 

@@ -51,7 +51,7 @@ returns a verdict with the run attached. The oracle changes per signal; the mach
 |---|---|---|
 | a production error | *something broke* | a test that fails before the change and passes after |
 | a dependency advisory | *this version is vulnerable* | your own suite, run against the upgrade |
-| a static finding | *this could be exploited* | a test naming the hostile input |
+| a static finding | *this could be exploited*, or *this code is dead* | a test naming the hostile input — or removing the code and running your suite, where coverage proves the line ran |
 
 **The first two rows are in a release** — the second since `0.1.0a8`, and it says no more often than
 yes. The third does not exist.
