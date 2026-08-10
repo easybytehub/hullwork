@@ -1206,6 +1206,7 @@ def examine(
     env_file: Path,
     compose_file: Path | None,
     docker: str = "docker",
+    before_there_is_an_instance: bool = False,
 ) -> list[Finding]:
     """Every check, in the order an attempt needs them.
 
@@ -1221,6 +1222,18 @@ def examine(
     are different answers and only one of them is true here.
     """
     database = database_built(session, settings)
+    if before_there_is_an_instance:
+        # **The pre-flight's own state, said here rather than patched afterwards** (item 199). There
+        # being no schema is what a pre-flight is *for*, so `expected` is the honest answer — and
+        # the branch below, which tells a reader to fix the database, is false advice when there is
+        # nothing yet to fix. One flag, one source of truth, rather than a caller rewriting strings.
+        database = Finding(
+            "database",
+            State.EXPECTED,
+            "there is no instance yet, which is what this command is for. `docker compose up` "
+            "creates it and runs the migrations; `hullwork doctor` from inside says whether it "
+            "worked.",
+        )
     docker_says = docker_daemon(docker)
     findings = [
         git_on_path(),
@@ -1232,18 +1245,23 @@ def examine(
         policies(settings),
         nothing_was_left_behind(docker, asked=docker_says.state is State.OK),
     ]
-    if database.state is State.BROKEN:
+    if database.state is not State.OK:
+        why = (
+            "there is no instance yet, so nothing knows which repositories it will watch. This "
+            "one is answered after `docker compose up`, by `hullwork doctor` from inside."
+            if before_there_is_an_instance
+            else "the database above cannot be queried for the active projects, so which "
+            "repositories this instance watches is unknown. Fix the database and run this again."
+        )
+        findings.append(Finding("code token", State.UNKNOWN, f"not asked: {why}"))
         findings.append(
             Finding(
-                "code token",
+                "inventory",
                 State.UNKNOWN,
-                "not asked: the database above cannot be queried for the active projects, so "
-                "which repositories this instance watches is unknown. Fix the database and run "
-                "this again.",
+                "not asked: there is no instance yet."
+                if before_there_is_an_instance
+                else "not asked: the database cannot be queried.",
             )
-        )
-        findings.append(
-            Finding("inventory", State.UNKNOWN, "not asked: the database cannot be queried.")
         )
         findings.append(
             Finding(

@@ -1624,6 +1624,7 @@ def _attempt(
     from hullwork.forge import ForgeError
     from hullwork.ingest import _manifest_for
     from hullwork.sandbox import image as image_module
+    from hullwork.sandbox import net as net_module
     from hullwork.sandbox.net import Cable
     from hullwork.sandbox.run import Sandbox
 
@@ -1782,6 +1783,10 @@ def _attempt(
                 allowed_models=_allowed_models(settings),
                 max_tokens=settings.max_attempt_tokens,
                 auth_style=settings.model_auth_style,
+                # **The instance's image, not a constant** (item 201). A deployment that pulls the
+                # published image has no `hullwork:dev` on its host, and the gateway is the
+                # component that observes and seals model traffic.
+                image=net_module.gateway_image(settings.gateway_image),
             )
         )
         # Before the model is called, and it raises rather than warns.

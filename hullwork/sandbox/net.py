@@ -72,6 +72,23 @@ CABLE_IMAGE = "python:3.12-slim"
 #: one fails loudly at `docker run` rather than quietly.
 GATEWAY_IMAGE = "hullwork:dev"
 
+
+def gateway_image(configured: str | None) -> str:
+    """The image the gateway runs from — **the instance's own, not a constant** (item 201).
+
+    The constant above named the image *this installation built*, which stopped being true the day
+    a deployment could pull a published one instead: there is no `hullwork:dev` on a host that never
+    built, so the gateway — the component that observes and seals model traffic — could not start.
+    That is item 191's failure, and it was already being worked around by a `docker tag` on every
+    deploy, with a comment recording the day nobody ran it and the gateway was four days behind the
+    dispatcher it serves.
+
+    The default is unchanged on purpose. Every deployment written before this item names no image,
+    and moving them to something they do not have would be this item causing the failure it exists
+    to prevent.
+    """
+    return configured or GATEWAY_IMAGE
+
 #: Where the credential and the journal live inside the gateway. One directory, one volume — see
 #: `_seed_volume` for why it is a volume and not two bind mounts.
 RUN_DIR = "/run/hullwork"

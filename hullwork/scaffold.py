@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from hullwork import __version__
+
 #: What the scaffold writes. Two files, and neither of them is a secret.
 COMPOSE_FILE = "docker-compose.yml"
 ENVIRONMENT_FILE = "deploy.env"
@@ -140,6 +142,8 @@ REACH: dict[str, Reach] = {
     # **The one line that only exists on one side.** DR-0009, and the receiver refuses to start if
     # it finds it.
     "forge_code_token": Reach.DISPATCHER,
+    # Only the dispatcher runs a gateway; the receiver never starts a container (item 201).
+    "gateway_image": Reach.DISPATCHER,
     # The model route: only the half that runs attempts talks to a provider.
     "model_endpoint": Reach.DISPATCHER,
     "model_auth_style": Reach.DISPATCHER,
@@ -277,6 +281,11 @@ def compose(*, docker_gid: str | None) -> str:
     )
     receiver_env = environment_block(Reach.RECEIVER)
     dispatcher_env = environment_block(Reach.DISPATCHER)
+    # **The image doing the scaffolding pins itself** (item 201). There is no data file to read —
+    # only `hullwork` is packaged — and there does not need to be: `init` is run from the image, so
+    # the version it writes is provably one you just pulled. A dev checkout pins its own
+    # `__version__`, which is the honest answer for a tree that may be ahead of any release.
+    pinned = __version__
     return f"""# Hullwork, as a real deployment. Written by `hullwork init`.
 #
 # Two programs, and the split is the product rather than a precaution (DR-0009, spec M2 §1):
@@ -288,7 +297,7 @@ def compose(*, docker_gid: str | None) -> str:
 #
 # Start it with both files loaded, in this order:
 #
-#     set -a; . ./{ENVIRONMENT_FILE}; set +a; docker compose up -d --build
+#     set -a; . ./{ENVIRONMENT_FILE}; set +a; docker compose up -d
 #
 # `docker compose up` on its own gives you ingest, deduplication, triage and issues. It does not
 # attempt fixes and no setting here turns that on: that is `autofix.agent` in each project's own
@@ -296,21 +305,31 @@ def compose(*, docker_gid: str | None) -> str:
 
 services:
   api:
-    build:
-      # **Where the source is, and it is not here** (item 127). This directory is your deployment,
-      # and `hullwork init` asks that it not be the checkout — a clone already carries a
-      # `docker-compose.yml` of its own, which `init` would keep. So the context is a variable, and
-      # `.` only works if you ignored that advice.
-      context: ${{BUILD_SOURCE:-.}}
-      args:
-        # Empty by default: a self-hosted tool should not install an error-reporting SDK you did
-        # not ask for. Set `BUILD_EXTRAS=[telemetry]` when you set HULLWORK_ERROR_DSN, or the
-        # receiver refuses to start — it will not pretend to be watched when it is not.
-        EXTRAS: "${{BUILD_EXTRAS:-}}"
-    # **Tagged with the instance** (item 130). A constant here means the second instance on a host
-    # takes the name and the first keeps running an image nothing points at — measured on the host
-    # that runs two. The default keeps a single-instance deployment on `hullwork:dev`.
-    image: hullwork:${{HULLWORK_INSTANCE:-dev}}
+    # **Pulled, not built** (item 201). Until then this file built from a checkout and never
+    # mentioned the published image at all, so the documented path was: clone the source, compile
+    # 500 MB, and never find out one exists. Nothing about running Hullwork needs its source.
+    #
+    # **Not `HULLWORK_IMAGE`**: that namespace belongs to `Settings`, which refuses to start on a
+    # name it does not know — the guard that exists so a typo is an error rather than a feature
+    # silently off. This is a compose knob, not a setting, so it is named like the file's others.
+    #
+    # Pinned rather than floating: `edge` follows `main` and pinning documentation to it would be
+    # pinning to nothing. Move it deliberately, and `hullwork init` will tell you what changed.
+    image: ${{RUN_IMAGE:-ghcr.io/easybytehub/hullwork:{pinned}}}
+    # **To build instead** — you are changing Hullwork's own code, which is the only reason to:
+    # set BUILD_SOURCE to your checkout, uncomment the four lines below, and add `--build` to
+    # `docker compose up`. That is what BUILD_SOURCE was always for.
+    #
+    # **And set RUN_IMAGE per instance if you build more than one here** (item 130, measured on
+    # the host that runs two): a built image takes the name it is given, so two instances sharing
+    # one leaves the second holding the tag and the first running an image nothing points at.
+    # `RUN_IMAGE=hullwork:${{HULLWORK_INSTANCE:-dev}}` restores exactly what that item decided.
+    # Pulling has no such problem — nothing is being tagged.
+    #
+    #   build:
+    #     context: ${{BUILD_SOURCE:-.}}
+    #     args:
+    #       EXTRAS: "${{BUILD_EXTRAS:-}}"
     restart: unless-stopped
     # Bound to an address of your choosing, and the default is loopback because the webhook
     # endpoint is real: the token is a path segment, and anything that can reach this URL can post
@@ -369,7 +388,7 @@ services:
     profiles: [autofix]
     # The same tag as the receiver above, always: two halves of one instance on two builds is a
     # worse failure than the one item 130 is about.
-    image: hullwork:${{HULLWORK_INSTANCE:-dev}}
+    image: ${{RUN_IMAGE:-ghcr.io/easybytehub/hullwork:{pinned}}}
     depends_on: [api]
     restart: unless-stopped
     # **No `ports:`, no healthcheck, nothing listening.** The dangerous property is listening *and*
@@ -490,7 +509,7 @@ def environment(*, docker_gid: str | None) -> str:
 #
 # Loaded into the shell before compose, so the file is read by you and not by the application:
 #
-#     set -a; . ./{ENVIRONMENT_FILE}; set +a; docker compose up -d --build
+#     set -a; . ./{ENVIRONMENT_FILE}; set +a; docker compose up -d
 #
 # It is deliberately not `.env`: `Settings` reads that one with `extra="forbid"` and refuses to
 # start on any key in it that is not a setting — which is correct, and which makes `.env` the wrong
@@ -578,6 +597,12 @@ HULLWORK_MAX_TURNS=
 # difference. Same reasoning as `REPLACE-ME` for `group_add`: a placeholder that fails loudly
 # beats a default that fails obscurely.
 BUILD_SOURCE=
+
+# **Set by `hullwork init`, not by you** (item 201). The gateway that observes and seals model
+# traffic runs Hullwork's own code, so it needs an image — and hardcoding one meant a deployment
+# that pulls had no such image on the host and no gateway. Change it only if you changed the image
+# above.
+HULLWORK_GATEWAY_IMAGE=
 
 # Who this instance is, when a host runs more than one. Every container, network and volume an
 # attempt creates is labelled with it, and this instance's reaper removes only what carries its
@@ -722,3 +747,181 @@ def write(into: Path, *, docker_gid: str | None) -> Written:
                 f"not: `{STAT_GROUP}` on the host, into `group_add` in the compose file."
             )
     return done
+
+
+# --- the addressable minimum (item 197) ----------------------------------------------------------
+
+#: One thing an instance can do, the variables it cannot do it without, and what each one buys.
+#:
+#: **Grounded in what `doctor` already checks**, not invented here: every variable below is one some
+#: check refuses to work without, and the sentence beside it is that check's own consequence. The
+#: point of the table is that the *union* of it is the nineteen blanks — and nobody needs the union.
+@dataclass(frozen=True)
+class Capability:
+    name: str
+    #: `variable -> what having it buys`. Ordered: the first missing one is the one to do next.
+    needs: tuple[tuple[str, str], ...]
+
+
+INGEST = Capability(
+    "errors arrive, are deduplicated and triaged, and become issues",
+    (
+        (
+            "HULLWORK_FORGE_URL",
+            "which forge holds your repositories. Without it there is nowhere to file",
+        ),
+        (
+            "HULLWORK_FORGE_TOKEN",
+            "content read and issue write, and **not** push. A token cannot mint a token, so this "
+            "is a web interface and a human, once",
+        ),
+        (
+            "HULLWORK_BASE_URL",
+            "where your instance is reachable from your tracker. Hosted GlitchTip refuses to call "
+            "private addresses at all",
+        ),
+    ),
+)
+
+ENRICHMENT = Capability(
+    "the full error behind each issue: frames, culprit, release",
+    (
+        ("HULLWORK_TRACKER_URL", "where to ask for the occurrence a webhook only summarised"),
+        ("HULLWORK_TRACKER_TOKEN", "a read on issues. It never needs to write anything"),
+        ("HULLWORK_TRACKER_ORG", "which organisation on that tracker to ask about"),
+    ),
+)
+
+AUTOFIX = Capability(
+    "attempting a fix, behind the `autofix` profile and opted into per project",
+    (
+        (
+            "HULLWORK_FORGE_CODE_TOKEN",
+            "the only credential here that can push. The always-on service refuses to start "
+            "holding it, so it reaches the dispatcher and nothing else",
+        ),
+        (
+            "HULLWORK_MODEL_KEY",
+            "an agent has nothing to think with otherwise, and every attempt fails before the "
+            "sandbox starts",
+        ),
+    ),
+)
+
+CAPABILITIES = (INGEST, ENRICHMENT, AUTOFIX)
+
+
+@dataclass(frozen=True)
+class Answers:
+    """What a person said when asked, and **nothing they typed in confidence**.
+
+    No field here holds a credential, and `test_no_secret_is_ever_written_by_an_answer` asserts that
+    by reading the field names: a setup command is not worth putting a token into a terminal's
+    scrollback for, so the questions ask which things exist and never what they are. What is missing
+    is then named, and the operator pastes it into a file with a mode that already protects it.
+    """
+
+    forge_url: str | None = None
+    tracker_url: str | None = None
+    base_url: str | None = None
+    build_source: str | None = None
+    #: Whether this instance should attempt fixes at all. `False` is the product without an agent,
+    #: which is a whole product and the documented default.
+    autofix: bool = False
+
+    def wanted(self) -> tuple[Capability, ...]:
+        """Which capabilities this operator asked for. Ingest is not optional: it is the product."""
+        chosen = [INGEST]
+        if self.tracker_url is not None:
+            chosen.append(ENRICHMENT)
+        if self.autofix:
+            chosen.append(AUTOFIX)
+        return tuple(chosen)
+
+    def assigned(self) -> dict[str, str]:
+        """Variable to value, for the answers that are values rather than choices."""
+        pairs = (
+            ("HULLWORK_FORGE_URL", self.forge_url),
+            ("HULLWORK_TRACKER_URL", self.tracker_url),
+            ("HULLWORK_BASE_URL", self.base_url),
+            ("BUILD_SOURCE", self.build_source),
+        )
+        return {name: value for name, value in pairs if value}
+
+
+def filled(text: str, answers: Answers) -> str:
+    """The environment file with what was answered written in, and nothing else touched.
+
+    **Assignment only, never deletion.** A variable nobody answered keeps its blank line and the
+    comment above it that says what it is for — the file is the reference as well as the
+    configuration, and a scaffold that removed the lines it judged irrelevant would be deciding for
+    somebody what they will never want.
+    """
+    for name, value in answers.assigned().items():
+        text = text.replace(f"\n{name}=\n", f"\n{name}={value}\n", 1)
+    return text
+
+
+def what_is_still_needed(answers: Answers, text: str) -> list[str]:
+    """What is left to do, for the capabilities that were asked for and no others.
+
+    This is the item's whole subject. `init` used to print five numbered steps, the same list for
+    everybody, and it was the union: an instance that only ingests needs four of nineteen variables
+    and was shown the lot. A minimum nobody can address is not a minimum.
+
+    Values are never echoed. The report names variables and consequences, so that pasting it into an
+    issue cannot leak what it was just told.
+    """
+    empty = {
+        line.split("=", 1)[0]
+        for line in text.splitlines()
+        if line.endswith("=") and line[:-1].isupper()
+    }
+    assigned = answers.assigned()
+    said: list[str] = []
+    for capability in answers.wanted():
+        missing = [
+            (name, why)
+            for name, why in capability.needs
+            if name in empty and name not in assigned
+        ]
+        if not missing:
+            continue
+        said.append(f"For {capability.name}:")
+        said += [f"  {name} — {why}" for name, why in missing]
+    return said
+
+
+#: What is asked, in the order the answers matter. Every one has a default reachable with enter, and
+#: **enter everywhere produces the file the non-interactive run produces** — the documented path and
+#: the lazy path are the same path, which is the only way the documentation stays true.
+QUESTIONS = (
+    ("forge_url", "Which forge holds your repositories?", "URL, or enter to fill it in later"),
+    (
+        "tracker_url",
+        "Where does your error tracker live?",
+        "URL, or enter for none yet — errors can still arrive by webhook",
+    ),
+    (
+        "base_url",
+        "Where will this instance be reachable?",
+        "URL your tracker can call, or enter",
+    ),
+    ("build_source", "Where is the checkout you cloned?", "path, or enter"),
+    ("autofix", "Should it attempt fixes?", "y/N — no is a whole product, and the default"),
+)
+
+
+def ask(prompt: object) -> Answers:
+    """Put the questions to a person. `prompt(question, hint)` returns their answer as text.
+
+    Injected rather than reading `input` directly so the questions can be tested without a terminal,
+    and so the caller owns the decision that there is a terminal at all.
+    """
+    said: dict[str, object] = {}
+    for field_name, question, hint in QUESTIONS:
+        answer = str(prompt(question, hint) or "").strip()  # type: ignore[operator]
+        if not answer:
+            continue
+        said[field_name] = answer.lower().startswith("y") if field_name == "autofix" else answer
+    return Answers(**said)  # type: ignore[arg-type]

@@ -3405,6 +3405,23 @@ def _cmd_prune(
     return 0
 
 
+def _init_description() -> str:
+    """What `init` is, said where a person meets it. Item 200.
+
+    It reaches the network now, which it never used to, and that belongs here rather than in a
+    release note nobody reads.
+    """
+    return (
+        "Write the compose file and environment a real deployment needs, then say what is still "
+        "missing — for the capabilities you asked for, not for everybody.\n\n"
+        "Safe to run again: it never overwrites a file that is already there, and the second run "
+        "is the report on its own, which is what you want after pasting a credential.\n\n"
+        "**It reaches the network** when a forge is configured: one connection to it, and one "
+        "authenticated request to ask what your token may do. With nothing configured it contacts "
+        "nobody. It writes nothing outside the directory you give it and creates no database."
+    )
+
+
 def _cmd_init(args: argparse.Namespace, out: TextIO) -> int:
     """Write the files a real deployment needs, and say what only a person can do. Item 115.
 
@@ -3417,6 +3434,16 @@ def _cmd_init(args: argparse.Namespace, out: TextIO) -> int:
 
     into = Path(args.into).resolve()
     gid = scaffold.docker_socket_group()
+    # **Asked only where there is somebody to ask** (item 197). This command is documented as
+    # running from inside the image, before the package exists anywhere, and an installer script has
+    # no terminal to answer with — so with no TTY it does what it has always done. Pressing
+    # enter at every question produces the same files, which is what keeps the documented path and
+    # the lazy path the same path.
+    answers = scaffold.Answers()
+    if sys.stdin.isatty() and not args.no_questions:
+        print("Five questions, and enter is an answer to all of them.\n", file=out)
+        answers = scaffold.ask(lambda q, hint: input(f"  {q}\n    [{hint}] "))
+        print("", file=out)
     try:
         done = scaffold.write(into, docker_gid=gid)
     except OSError as exc:
@@ -3446,40 +3473,66 @@ def _cmd_init(args: argparse.Namespace, out: TextIO) -> int:
     for note in done.notes:
         print(f"  note      {note}", file=out)
     if not done.created:
-        print("\nNothing to do: both files already exist. Nothing was changed.", file=out)
-        return 0
+        # **No longer a no-op** (item 200). This said *nothing to do* at the exact moment somebody
+        # has pasted a token and wants to know whether it works — the least useful output in the
+        # product, printed on the run where the reader has the most to ask.
+        print("\nBoth files were already there, so nothing was written.", file=out)
+
+    # Only what was answered, and only into a file this run created — `write` refuses to overwrite
+    # (item 115), and filling in a file somebody already had would be that refusal with extra steps.
+    environment = into / scaffold.ENVIRONMENT_FILE
+    if answers.assigned() and scaffold.ENVIRONMENT_FILE in done.created:
+        environment.write_text(
+            scaffold.filled(environment.read_text(encoding="utf-8"), answers), encoding="utf-8"
+        )
+        print(
+            f"\n  filled in  {len(answers.assigned())} value(s) you gave, in "
+            f"{scaffold.ENVIRONMENT_FILE}",
+            file=out,
+        )
+
+    # **One report, assembled in one place** (item 200). This called `what_is_still_needed` and
+    # printed it, while `preflight` answered the same question its own way four hours later — two
+    # enumerations of what is missing, kept equal by nobody. `preflight.examine` now asks the
+    # capability question too, so a variable's consequence is written in the capability table and
+    # read from there by whoever prints it.
+    from hullwork import preflight
+
+    # **Its own settings, because this runs before `main` builds any** (item 115's `scaffolding`
+    # hook). A configuration this process cannot even parse is the most useful thing a report can
+    # say, so it is shown rather than raised: `init` is where somebody is still fixing it.
+    try:
+        settings = get_settings()
+    except ConfigError as exc:
+        print(f"\n  broken   configuration\n             {exc}", file=out)
+        return 1
+
+    found = preflight.examine(
+        settings, answers=answers, environment_file=into / scaffold.ENVIRONMENT_FILE
+    )
+    print("\nWhere this deployment stands:\n", file=out)
+    for one in found:
+        if one.state is doctor.State.OK:
+            continue
+        print(f"  {one.state.value:9}{one.check}", file=out)
+        print(f"             {one.detail}", file=out)
 
     print(
-        f"\nWhat only you can do, in this order:\n"
+        f"\nThen:\n"
         f"\n"
-        f"  1. Mint a forge token that can read content and write issues, and **not** push, and\n"
-        f"     put it in {scaffold.ENVIRONMENT_FILE} as HULLWORK_FORGE_TOKEN. A token cannot mint\n"
-        f"     a token, so this is a web interface and a human, once.\n"
-        f"  2. Set HULLWORK_BASE_URL to an address your error tracker can actually reach.\n"
-        f"     Hosted GlitchTip refuses to call private addresses at all — the deploy notes §1\n"
-        f"     is about that and nothing else.\n"
-        # **Step 3 was missing and step 4 could not work without it** (2026-08-04). This list claims
-        # to be everything only a person can do, and it omitted the one value with no sensible
-        # default: the build context. A stranger followed steps 1-3 verbatim and got
-        # `failed to read dockerfile` — from a directory this command chose for them. It is now
-        # written empty rather than as `.`, so the failure names itself, and it is named here too.
-        f"  3. Set BUILD_SOURCE to the checkout you cloned. It is **not** this directory — a\n"
-        f"     clone carries a docker-compose.yml of its own — and the build cannot find a\n"
-        f"     Dockerfile until you set it.\n"
-        f"  4. set -a; . ./{scaffold.ENVIRONMENT_FILE}; set +a; docker compose up -d --build\n"
-        f"  5. hullwork doctor — it names what is still missing, one line each.\n"
-        f"\n"
-        f"That gives you ingest, deduplication, triage and issues — one container, and step 3\n"
-        f"starts exactly that. Attempting fixes needs two more credentials (a code token and a\n"
-        f"model key), is opted into per project in each repository's own hullwork.yml, and\n"
-        f"runs in\n"
-        f"a second container this file keeps behind a profile:\n"
-        f"\n"
-        f"  docker compose --profile autofix up -d\n"
-        f"\n"
-        f"Nothing here turns it on, and now the compose file agrees (item 135).",
+        f"  set -a; . ./{scaffold.ENVIRONMENT_FILE}; set +a; docker compose up -d --build\n"
+        f"  hullwork doctor — it names what is still missing, one line each.\n",
         file=out,
     )
+    if not answers.autofix:
+        print(
+            "Attempting fixes is off, which is a whole product and the default. It is opted into "
+            "per project in each repository's own hullwork.yml, needs two more credentials, and "
+            "runs in a second container this compose file keeps behind a profile:\n"
+            "\n"
+            "  docker compose --profile autofix up -d\n",
+            file=out,
+        )
     return 0
 
 
@@ -3941,14 +3994,25 @@ def build_parser() -> argparse.ArgumentParser:
     gateway.set_defaults(func=_cmd_gateway)
 
     starting = subparsers.add_parser(
-        "init", help="write the compose file and environment a real deployment needs"
+        "init",
+        help="write what a deployment needs, and say what is still missing",
+        description=_init_description(),
     )
     starting.add_argument(
         "--into", default=".", help="where to write them (default: the current directory)"
     )
+    starting.add_argument(
+        "--no-questions",
+        action="store_true",
+        help=(
+            "write the files without asking anything, which is what happens anyway when there is "
+            "no terminal. Answering every question with enter produces the same files"
+        ),
+    )
     # No session: this runs before there is an instance, and opening the database here would
     # create an empty one in the operator's working directory.
     starting.set_defaults(func=None, scaffolding=_cmd_init)
+
 
     page_token = subparsers.add_parser(
         "page-token",

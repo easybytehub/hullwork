@@ -134,6 +134,13 @@ def test_init_says_what_only_a_person_can_do(tmp_path: Path, capsys: object) -> 
     The three things it cannot do are the three that need a human: mint a token that can file
     issues and not push, choose an address the error tracker can actually reach, and decide whether
     fixes are attempted at all — which is per project, in the project's own manifest.
+
+    **Rewritten by substance in item 197, and the wording it used to pin is deliberately gone.** It
+    asserted `"Mint a forge token"` from a numbered list printed identically to everybody, which was
+    the union of every capability's requirements — nineteen variables' worth of instruction for a
+    reader who needed four. The three properties above are what mattered and all three survive; the
+    sentences carrying them are now per-variable and per-capability. A test that pinned the copy
+    would have made improving it look like breaking it.
     """
     from io import StringIO
 
@@ -141,10 +148,11 @@ def test_init_says_what_only_a_person_can_do(tmp_path: Path, capsys: object) -> 
     assert main(["init", "--into", str(tmp_path)], out=out) == 0
     said = out.getvalue()
 
-    assert "Mint a forge token" in said
+    assert "HULLWORK_FORGE_TOKEN" in said
     assert "not** push" in said
-    assert "your error tracker can actually reach" in said
-    assert "Nothing here turns it on" in said, "attempting fixes is a per-project decision"
+    assert "reachable from your tracker" in said
+    assert "opted into per project" in said, "attempting fixes is a per-project decision"
+    assert "Attempting fixes is off" in said, "and it is off until somebody says otherwise"
 
 
 def test_init_touches_no_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
