@@ -98,23 +98,28 @@ def test_the_build_context_is_said_rather_than_assumed() -> None:
     `Dockerfile: no such file or directory` while the assertion below guaranteed one — a stranger
     hit it, from a value they never chose. The interpolation stays; the value ships empty, failing
     at the same step with `BUILD_SOURCE` named in the error.
+
+    **Read from the text since item 201**, and that is a weakening worth naming. Pulling became the
+    default, so the build block is commented out — a live `build:` beside an `image:` makes
+    `docker compose up` build on any host that does not already have the image, which is every
+    fresh one, which is the whole thing item 201 removed. The guard is now that the instructions a
+    builder uncomments still carry the right value, rather than that the YAML does. Prose-shaped,
+    and this repository distrusts those: it is here because the alternative was deleting it.
     """
-    import yaml
+    text = scaffold.compose(docker_gid="989")
 
-    built = yaml.safe_load(scaffold.compose(docker_gid="989"))["services"]["api"]["build"]
-
-    assert built["context"] == "${BUILD_SOURCE:-.}"
+    assert "context: ${BUILD_SOURCE:-.}" in text
     assert "\nBUILD_SOURCE=\n" in scaffold.environment(docker_gid="989")
 
 
 def test_the_dsn_and_the_extra_that_makes_it_usable_are_written_together() -> None:
     """`deploy.env` named `HULLWORK_ERROR_DSN` and the compose beside it built with no extras, so
     setting the variable the scaffold wrote made the receiver refuse to start. The refusal is right;
-    handing somebody an unusable variable is not."""
-    import yaml
+    handing somebody an unusable variable is not.
 
-    built = yaml.safe_load(scaffold.compose(docker_gid="989"))["services"]["api"]["build"]
-    assert built["args"]["EXTRAS"] == "${BUILD_EXTRAS:-}"
+    Read from the text since item 201, for the reason the test above gives.
+    """
+    assert 'EXTRAS: "${BUILD_EXTRAS:-}"' in scaffold.compose(docker_gid="989")
 
     written = scaffold.environment(docker_gid="989")
     dsn_at = written.index("HULLWORK_ERROR_DSN=")
@@ -156,29 +161,39 @@ def test_the_image_is_tagged_with_the_instance() -> None:
 
     A deployment directory, a database, a set of sandbox objects and an image name are the four
     things two instances on one host both want. Item 125 did the third; this is the fourth.
+
+    **Item 201 broke this and the derived tree's gates caught it.** The default became a pulled
+    image, which has no such problem — nothing is being tagged, so two instances sharing one name
+    collide over nothing. The problem is only a *built* image taking a name, so what this asserts
+    now is that a builder still has the knob and is told to use it. The property is intact; the
+    literal that used to carry it is not, and it was the literal that failed.
     """
     import yaml
 
-    services = yaml.safe_load(scaffold.compose(docker_gid="989"))["services"]
+    text = scaffold.compose(docker_gid="989")
+    services = yaml.safe_load(text)["services"]
 
-    assert services["api"]["image"] == "hullwork:${HULLWORK_INSTANCE:-dev}"
+    assert "RUN_IMAGE" in services["api"]["image"], "the per-instance knob is still there"
+    assert "HULLWORK_INSTANCE" in text, "and a builder is told what to set it to"
     assert services["dispatcher"]["image"] == services["api"]["image"], (
         "two halves of one instance on two builds is a worse failure than the one being fixed"
     )
 
 
-def test_one_instance_keeps_the_name_it_has_today() -> None:
-    """The default is the old constant, so nobody who never heard of this has to do anything —
-    the same rule item 125 and item 127 both followed.
+def test_one_instance_needs_no_checkout_and_no_build() -> None:
+    """**This asserted the opposite until item 201**, and deliberately: the default was the old
+    constant so that nobody who never heard of per-instance tagging had to do anything.
 
-    Asserted per service and by equality, not by presence: the compose names the image twice, and a
-    check that only asks whether the string appears *somewhere* is satisfied by the other one. Found
-    by reintroducing exactly that.
+    The default changed on purpose, because the old one made step one of an installation a `git
+    clone` and a 500 MB compile for a product that publishes its image. What survives unchanged is
+    the shape of the assertion — **per service and by equality, not by presence**: the compose names
+    the image twice, and a check that only asks whether a string appears somewhere is satisfied by
+    the other one. Found, back then, by reintroducing exactly that.
     """
     import yaml
 
     services = yaml.safe_load(scaffold.compose(docker_gid="989"))["services"]
 
     for name in ("api", "dispatcher"):
-        assert services[name]["image"] == "hullwork:${HULLWORK_INSTANCE:-dev}", name
-        assert ":-dev}" in services[name]["image"], f"{name}: unset must resolve as it always did"
+        assert services[name]["image"].startswith("${RUN_IMAGE:-ghcr.io/"), name
+        assert "build" not in services[name], f"{name}: pulling is the default, building is opt-in"

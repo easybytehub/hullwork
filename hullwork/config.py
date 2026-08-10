@@ -202,6 +202,9 @@ class Settings(BaseSettings):
     #:
     #: Bind-mount them read-only and name them here. Unset is not an error and not a pass: `doctor`
     #: says the deployment was not checked, and why.
+    #: What the gateway runs from, set by the scaffold and never by a person (item 201). Absent
+    #: means `hullwork:dev`, which is what every deployment written before that item has.
+    gateway_image: str | None = None
     deployment_env_file: str | None = None
     deployment_compose_file: str | None = None
 
