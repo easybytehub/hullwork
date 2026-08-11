@@ -15,9 +15,15 @@ Every test here was verified by reintroducing the defect it covers.
 from __future__ import annotations
 
 import json
+import os
+import re
+from collections.abc import Iterable
 from pathlib import Path
 
-from hullwork import scaffold
+import pytest
+from the_registry import published_tags
+
+from hullwork import __version__, scaffold
 from hullwork.sandbox import net
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,14 +44,128 @@ def test_the_scaffolded_compose_pulls_a_published_image() -> None:
     assert "ghcr.io/easybytehub/hullwork:" in text
 
 
+def test_it_pins_a_version_and_not_a_moving_tag() -> None:
+    """Whatever it pins, it is a version. `edge` moves, and a deployment that follows a moving tag
+    cannot say what it is running when somebody asks."""
+    text = _compose()
+
+    assert "ghcr.io/easybytehub/hullwork:edge" not in text
+    assert f"ghcr.io/easybytehub/hullwork:{__version__}" in text, (
+        "the image doing the scaffolding pins itself (item 201)"
+    )
+
+
+def pin_disagreement(
+    version: str, *, surface: str, pinned: str, published: Iterable[str] | None
+) -> str | None:
+    """The failure, or `None` when there is nothing to report. Item 216.
+
+    A pure function taking the registry's answer rather than asking for it, for the reason item 192
+    gives: the interesting states are the ones that cannot be reached on demand, and a rule only
+    exercised against the live registry is a rule tested in whichever state today happens to be in.
+    """
+    if published is None:
+        raise LookupError("the registry could not be asked, which is not `nothing published`")
+    if version not in published:
+        # The window between the bump and the release. The tree is genuinely ahead of every
+        # release; pinning `__version__` is the honest answer and the surface is allowed to lag.
+        if pinned != version:
+            return f"no image is published for {version} and the compose pins {pinned}"
+        return None
+    if surface != version:
+        return (
+            f"an image is published for {version} and the surface records {surface}: "
+            "`docs/releasing.md` has the two post-release steps, in order"
+        )
+    if pinned != surface:
+        return f"the surface records {surface} and the compose pins {pinned}"
+    return None
+
+
+def test_the_registry_being_unreachable_is_not_a_pass() -> None:
+    """**Written because a mutation escaped.** Treating `None` as *nothing published* still passed,
+    because during the window the two answers agree — they only diverge after the release, which is
+    the one moment nobody would be running this by hand.
+
+    `published_tags` returns `None` for *could not ask* on purpose. Blurring it into *nothing
+    published* makes an unreachable registry look like permission, which is the failure mode this
+    whole file exists to make impossible."""
+    with pytest.raises(LookupError):
+        pin_disagreement("0.1.0a9", surface="0.1.0a8", pinned="0.1.0a9", published=None)
+
+
+def test_the_window_between_the_bump_and_the_release_is_allowed() -> None:
+    """The deadlock item 216 found: the pin is `__version__` by construction and the surface cannot
+    be re-recorded until the image is public, which cannot happen until this passes."""
+    assert pin_disagreement(
+        "0.1.0a9", surface="0.1.0a8", pinned="0.1.0a9", published=("0.1.0a8",)
+    ) is None
+
+
+def test_the_window_does_not_excuse_a_pin_that_names_something_else() -> None:
+    """**The branch nothing covered.** Deleting the check inside the window escaped a mutation
+    round: every test here either expected `None` from the window or exercised a published version,
+    so a window that accepted any pin at all looked exactly like a window that accepted the right
+    one. Pinning a release that does not exist is how a compose file sends somebody to a 404."""
+    said = pin_disagreement(
+        "0.1.0a9", surface="0.1.0a8", pinned="0.1.0a7", published=("0.1.0a8",)
+    )
+
+    assert said is not None
+    assert "0.1.0a7" in said
+
+
+def test_a_published_version_requires_the_surface_and_the_pin_to_name_it() -> None:
+    """And the window closes by itself the moment the image exists — no flag to clear.
+
+    **Asserted on which failure it is**, not merely that there is one: the first version checked for
+    a message containing `0.1.0a8`, and deleting this branch fell through to the next one, whose
+    message also contains it. Two different faults reading the same to a test is a test that cannot
+    tell you which of them you have."""
+    said = pin_disagreement(
+        "0.1.0a9", surface="0.1.0a8", pinned="0.1.0a9", published=("0.1.0a8", "0.1.0a9")
+    )
+
+    assert said is not None
+    assert "post-release" in said, f"the wrong branch answered: {said}"
+
+
+def test_the_finished_state_is_quiet() -> None:
+    assert pin_disagreement(
+        "0.1.0a9", surface="0.1.0a9", pinned="0.1.0a9", published=("0.1.0a8", "0.1.0a9")
+    ) is None
+
+
+@pytest.mark.skipif(
+    not os.environ.get("ASK_THE_REGISTRY"),
+    reason="asks ghcr.io; set ASK_THE_REGISTRY=1 to run it (CI does)",
+)
 def test_it_pins_the_release_this_repository_documents() -> None:
     """**Asserted against the recorded surface**, not against a literal typed twice. A compose file
     telling somebody to run a version the documentation does not describe is the two-halves problem
     item 192 closed, arriving in a third file.
-    """
-    text = _compose()
 
-    assert f"ghcr.io/easybytehub/hullwork:{SURFACE['version']}" in text
+    **Except during the window between the bump and the release** (item 216). The pin is
+    `__version__` by construction and the surface cannot be re-recorded until the image is public,
+    so the first version of this deadlocked the release that found it: `publish.sh --pr` gates the
+    derived tree before opening anything, and the gate could only pass after the thing it gates.
+
+    The exemption is the fact item 192 already asks for, not a flag: **is an image published for
+    the version this tree claims to be?** If it is, the surface must record it and the pin must be
+    it. If not, the tree is genuinely ahead of every release, and saying so is the honest answer.
+
+    Offline is not a pass. `published_tags` returns `None` for *could not ask*, which is a different
+    answer from *nothing published* — blurring them would make an unreachable registry look like
+    permission.
+    """
+    found = re.search(r"ghcr\.io/easybytehub/hullwork:([^\s}]+)", _compose())
+
+    assert found is not None, "the scaffolded compose names no published image at all"
+    said = pin_disagreement(
+        __version__, surface=SURFACE["version"], pinned=found.group(1), published=published_tags()
+    )
+
+    assert said is None, said
 
 
 def test_building_is_still_possible_and_now_explicit() -> None:

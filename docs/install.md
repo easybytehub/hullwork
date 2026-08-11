@@ -122,12 +122,35 @@ Losing them would make every already-known error look new tomorrow morning.
 
 ### Asking it how it is
 
-The CLI lives *inside* the container in this stack, so every command is reached the same way:
+> **Built and unreleased**, as of 2026-08-10. Everything in this section is in no image you can pull:
+> `docs/published-surface.json` records `0.1.0a8`, and these routes are items 203 to 208. Until a
+> release carries them, the CLI below is the whole of it — and this note stays, because the rule is
+> that documentation describes the released artefact rather than this checkout (`CONTRIBUTING.md`).
+>
+> Written down rather than deleted because the guard that catches this **cannot see it**: it compares
+> documented *commands* against the published image and knows nothing about URLs, so a route
+> documented before it exists passes every test. Recorded as work item 209.
+
+**From the page, which is the point** (DR-0022).
+Set a password once — `docker compose exec api hullwork password`, read from a prompt so it is not in
+your shell history — and everything below is a URL:
+
+| | |
+|---|---|
+| `/page/me/` | how it is, and every feature this instance has switched on, off, or cannot do |
+| `/page/me/doctor` | what is broken, a sentence per check |
+| `/page/me/config` | what it actually received — every variable, where it came from, and which half gets it. **No credential is printed**: a secret reads `set` or `not set` |
+| `/page/me/projects` | connect a project, re-read its manifest, disable it, rotate its webhook secret, name it in the tracker |
+
+That is the whole of running an instance, and none of it needs a shell. The password is what unlocks
+it; a read link handed to a colleague reads the instance and reaches none of those four.
+
+The CLI still does all of it, unchanged, for scripts and for installing:
 
 ```bash
-docker compose exec api hullwork status   # how it is           — exit 1 when degraded
-docker compose exec api hullwork doctor   # what is broken      — a sentence per check
-docker compose exec api hullwork config   # what it is set to   — every variable, source, and half
+docker compose exec api hullwork status   # exit 1 when degraded — `hullwork status || mail me`
+docker compose exec api hullwork doctor
+docker compose exec api hullwork config
 ```
 
 `status` exiting 1 when degraded is what makes `hullwork status || mail me` a whole monitoring setup,
@@ -141,13 +164,21 @@ you wrote in a file.
 
 ### A page a teammate can read
 
-`hullwork page-token` mints one URL, prints it once and stores only its hash. Behind it is what
-`status` says, read from the same functions, plus the evidence of every attempt. It is **off until you
-run that command**, and everything without the token — including a wrong token — gets the same `404` an
-unknown path gets, so it cannot be found by probing.
+Two doors, and they are for two people
+(DR-0021). **The first is unreleased**, per the note
+above; the second has worked since `0.1.0a5`.
 
-That URL **is** the credential. Anyone who has it can read every item and captured output on this
-instance. It is read-only, and rotating replaces it.
+**Yours is `/page/me/`**, behind the password. Nothing to lose, nothing to copy, and it is the only
+one that administers anything.
+
+**Theirs is a link.** `hullwork page-token` mints one URL, prints it once and stores only its hash —
+read-only, and it reaches no button and neither `doctor` nor `config`. That URL **is** the credential:
+anyone holding it can read every item and captured output here, so treat it as a secret. Rotating
+replaces it and stops the old one.
+
+Everything without a valid token — including a wrong one — gets the same `404` an unknown path gets,
+so the page cannot be found by probing. `/page/me/` offers a login **only where a password is set**,
+so an instance that never set one is as undiscoverable as it ever was.
 
 ### Two things about the port
 

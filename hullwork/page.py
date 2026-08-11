@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import html
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -84,16 +86,58 @@ def configured(session: Session) -> bool:
     return session.scalars(select(PageAccess).limit(1)).one_or_none() is not None
 
 
-def opens(session: Session, token: str) -> bool:
-    """Whether this token opens the page. Constant time, and the same cost when there is no page.
+#: The path segment that means *ask my session instead of a token* (DR-0021). Short, and shorter
+#: than anything `generate_token` can produce, which is what stops a minted token ever
+#: colliding with it — a collision would open the page for anybody signed in and close it for the
+#: person
+#: holding the link.
+MINE = "me"
+
+
+def opens(session: Session, token: str, *, acting: Acting | None = None) -> bool:
+    """Whether this request may read the page. Constant time, and the same cost when there is no
+    page.
 
     A missing row must not answer faster than a wrong token: the difference would say *"this
     instance has a page and you have the wrong key"*, which is the one bit of information the `404`
     is there to withhold.
+
+    **And a token is not the only way in** (DR-0021). The person who ran `page-token` reached it
+    through a shell on the host — they can already read this database, the environment file and the
+    Docker socket, so withholding their own page's URL from them protects nothing they do not
+    have. An operator with a session reads at `MINE`, and the token keeps the job it is good at:
+    handing
+    reading to somebody with no account, revocably.
+
+    Reading, not acting. `Acting` is what the renderer decides the second question from, and this
+    function answers only the first — item 166's split, which DR-0021 keeps.
+
+    **The `MINE` door exists only where a password is configured.** Everything else answers `404`,
+    including a wrong token, so the page cannot be found by probing; a login at a fixed path would
+    end that for every instance rather than for the ones that opted in. `offered` is exactly that
+    opt-in — `operator.configured` — so an instance with no password is as undiscoverable as before.
     """
+    if token == MINE:
+        return bool(acting and acting.csrf)
     access = session.scalars(select(PageAccess).limit(1)).one_or_none()
     expected = access.token_hash if access is not None else _DECOY_HASH
     return verify_token(token, expected) and access is not None
+
+
+def offers_a_login(token: str, acting: Acting | None) -> bool:
+    """Whether a request that may not read should be shown the login rather than a `404`.
+
+    **Two questions, and collapsing them is the bug I wrote first** (item 204). *May this request
+    see the page* and *may it be told there is a login* are different, and answering the second with
+    the first rendered the whole instance to anybody who typed `/page/me/`.
+
+    So: the content needs a session, and the door needs only the opt-in. An instance with no
+    password
+    configured offers nothing and is `404` like everything else, which is the property DR-0021
+    spends
+    nothing of.
+    """
+    return token == MINE and bool(acting and acting.offered)
 
 
 def issue(session: Session, token_hash: str) -> None:
@@ -130,7 +174,17 @@ def _own_prose(text: str) -> str:
     somebody points this at an error title from a tracker, the reasoning above should not be the
     only thing standing there. Untrusted text goes through `_h`, which is every interpolation.
     """
-    return re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", _h(text))
+    return _emphasised(_h(text))
+
+
+def _emphasised(already_escaped: str) -> str:
+    """The `**…**` half of `_own_prose`, on text that has been through `_h` already.
+
+    Separate because `_as_code` needs it and had already escaped and inserted its own `<code>`
+    tags: running the whole of `_own_prose` over that would escape the markup this module just
+    wrote, and serve `&lt;code&gt;` to a reader.
+    """
+    return re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", already_escaped)
 
 
 def _link(url: str | None, text: str | None = None) -> str:
@@ -197,7 +251,10 @@ _STYLE = """
      decision, and this page is a panel rather than a document. */
   --ink:    light-dark(#101319, #e9ebf0);
   --muted:  light-dark(#5a6270, #979fae);
-  --faint:  light-dark(#8b93a1, #666e7d);
+  /* Was #8b93a1/#666e7d, which carried the footer at 2.73:1 light and 3.90:1 dark —
+     under AA, on the sentence that explains what the URL is. Measured, not adjusted
+     by eye: these are the nearest values clearing 4.5:1 on all three surfaces. */
+  --faint:  light-dark(#656d7b, #7d8593);
   --rule:   light-dark(#dfe3ea, #232833);
   --canvas: light-dark(#eef1f5, #070910);
   --raise:  light-dark(#ffffff, #14171e);
@@ -208,6 +265,22 @@ _STYLE = """
   --passed:  light-dark(#0f6b39, #52bb83);
   --refused: light-dark(#ab2f22, #f0847a);
   --human:   light-dark(#5638ad, #b193f5);
+
+  /* The type scale (item 213). Twelve size/weight pairs were on one page and twenty distinct
+     sizes in this stylesheet, eight of them two-decimal one-offs: each reasonable where it was
+     written, none of them reasonable together. Nine steps, and a rule may only name a step. */
+  --t-2xs:  .6875rem;
+  --t-xs:   .75rem;
+  --t-sm:   .8125rem;
+  --t-md:   .875rem;
+  --t-base: .9375rem;
+  --t-lg:   1.0625rem;
+  --t-xl:   1.375rem;
+  --t-2xl:  1.75rem;
+  --t-3xl:  2.25rem;
+
+  /* How wide a line of prose is allowed to get. The shell fills the window; sentences do not. */
+  --measure: 68ch;
 
   --r: 8px;
   --r-chip: 5px;
@@ -222,12 +295,19 @@ body {
   margin: 0;
   background: var(--canvas);
   color: var(--ink);
-  font: 400 15px/1.55 var(--sans);
+  font: 400 var(--t-base)/1.55 var(--sans);
   font-synthesis-weight: none;
   -webkit-font-smoothing: antialiased;
 }
 
-.wrap { max-width: 62rem; margin: 0 auto; padding: 0 1.5rem 4rem; }
+/* The shell (item 213). At 1680px the work used 43% of the window: a 62rem measure is a width
+   for a document, and this is a panel. The window is filled and the sentences inside it are held
+   to `--measure`, because the fix for dead margins is not 120-character lines. */
+.wrap { max-width: 108rem; margin: 0 auto; padding: 0 2rem 4rem; }
+.sheet > p, .sheet > .sub, .sheet .why, footer { max-width: var(--measure); }
+/* A headline needs a shorter measure than a paragraph, and `ch` is relative to the element's own
+   size: 68ch at 28px came out 1170px wide, which is a measure in name only. */
+.sheet .lede { max-width: 34ch; }
 
 a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px;
     text-decoration-color: color-mix(in oklab, currentColor 35%, transparent); }
@@ -241,11 +321,16 @@ a:hover { text-decoration-color: currentColor; }
   padding: 1rem 0 .9rem; margin-bottom: 1.6rem;
   border-bottom: 1px solid var(--rule);
 }
-.mark { font: 600 1.1rem/1 var(--mono); color: var(--ink); }
-.word { font: 600 .95rem/1 var(--sans); letter-spacing: .01em; }
+.mark { font: 600 var(--t-lg)/1 var(--mono); color: var(--ink); text-decoration: none;
+        /* WCAG 2.2 AA 2.5.8 asks 24x24 CSS px, and this measured 10x17 (item 215). It is
+           a standalone control rather than a link inside a sentence, so the Inline
+           exception does not reach it. */
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 24px; min-height: 24px; }
+.word { font: 600 var(--t-base)/1 var(--sans); letter-spacing: .01em; }
 .bar .spacer { flex: 1; }
 .pill {
-  font: 550 .68rem/1 var(--sans); letter-spacing: .07em; text-transform: uppercase;
+  font: 550 var(--t-2xs)/1 var(--sans); letter-spacing: .07em; text-transform: uppercase;
   padding: .32rem .5rem; border-radius: var(--r-chip);
   border: 1px solid color-mix(in oklab, var(--c, var(--faint)) 40%, transparent);
   background: color-mix(in oklab, var(--c, var(--faint)) 9%, transparent);
@@ -286,7 +371,7 @@ a:hover { text-decoration-color: currentColor; }
      and `font-feature-settings: "zero" 0` does not turn it off because for that face it is not a
      feature, it is the glyph. Tabular numerals keep the columns aligned, which was the reason for
      mono here in the first place. */
-  font: 600 2.5rem/1 var(--sans); font-variant-numeric: tabular-nums lining-nums;
+  font: 600 var(--t-3xl)/1 var(--sans); font-variant-numeric: tabular-nums lining-nums;
   letter-spacing: -.035em; color: var(--ink);
 }
 /* Green only when there is something to be green about: a green `0` under HELD says "good" where it
@@ -294,9 +379,9 @@ a:hover { text-decoration-color: currentColor; }
 .cell.won  .big { color: var(--passed); }
 .cell.won.none .big, .cell.lost.none .big { color: var(--ink); }
 .cell.lost .big { color: var(--refused); }
-.name { font: 550 .7rem/1 var(--sans); letter-spacing: .08em; text-transform: uppercase;
+.name { font: 550 var(--t-2xs)/1 var(--sans); letter-spacing: .08em; text-transform: uppercase;
         color: var(--muted); margin-top: .35rem; }
-.gloss { font: 400 .72rem/1.35 var(--sans); color: var(--faint); }
+.gloss { font: 400 var(--t-xs)/1.35 var(--sans); color: var(--faint); }
 
 /* --- the answer ------------------------------------------------------------------------------ */
 
@@ -314,18 +399,169 @@ a:hover { text-decoration-color: currentColor; }
    queue it is from the stripe, and colour is worth more where it is scarce. A problem is the one
    exception, below, because red there is the message and not a label. */
 .lede {
-  font: 450 1.7rem/1.28 var(--sans);
+  font: 450 var(--t-2xl)/1.28 var(--sans);
   letter-spacing: -.022em; margin: 0; text-wrap: pretty; max-width: 44ch;
   color: var(--ink);
 }
 .lede.bad { color: var(--refused); }
-.lede .also { font: 400 .55em/1 var(--sans); color: var(--muted); letter-spacing: 0; }
+.lede .also { font: 400 var(--t-base)/1 var(--sans); color: var(--muted); letter-spacing: 0; }
 .answer .sub { margin: .7rem 0 0; }
 
 /* --- the decisions --------------------------------------------------------------------------- */
 
 /* One card with divided rows, not one card per row: six equally-bordered boxes on a screen is the
    same failure as six equally-weighted columns, in a different shape. */
+/* --- what this instance has switched on (items 203, 208) ------------------------------------
+   A panel, not the `decisions` list it borrowed at first: that one carries a fixed amber left
+   border because it means *waiting for you*, so a `cannot` row sat inside an amber stripe and the
+   severity read as the panel's rather than the row's.
+
+   Two columns, and the point of them is the first: the states line up on one edge, so the panel is
+   scanned down rather than read across. The stripe is per row for the same reason. */
+.standing {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.4rem;
+  background: var(--raise);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.standing li {
+  display: grid;
+  grid-template-columns: 6.2rem 1fr;
+  gap: 0 .85rem;
+  align-items: baseline;
+  padding: .8rem var(--pad) .8rem calc(var(--pad) - 3px);
+  border-left: 3px solid var(--c, var(--faint));
+  border-top: 1px solid var(--rule);
+}
+.standing li:first-child { border-top: 0; }
+.standing .pill { justify-self: start; color: var(--c, var(--faint)); border-color: currentColor; }
+.standing .name { font-weight: 550; color: var(--ink); }
+.standing .why {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: var(--t-md);
+  margin: .2rem 0 0;
+  /* These are read, not scanned, so they get a measure. Seen only by opening the page: the rows
+     ran to about 110 characters on a wide window, which is a paragraph pretending to be a row. */
+  max-width: 62ch;
+}
+/* Tight horizontally on purpose. Seen on screen: `.3em` of padding pushes a following comma far
+   enough away to read as a typographic error — `page-token ,` — so the chip is snug and earns its
+   separation from the background rather than from space. */
+.standing code {
+  font: var(--t-sm)/1.35 var(--mono);
+  background: var(--sunk);
+  padding: .05em .18em;
+  border-radius: 3px;
+  border: 1px solid var(--rule);
+}
+@media (max-width: 34rem) {
+  .standing li { grid-template-columns: 1fr; gap: .35rem 0; }
+  .standing .why { grid-column: 1; }
+}
+
+/* --- the rail (item 212, DR-0023) -----------------------------------------------------------
+   Furniture. It does not scroll away and it does not move between pages, so what exists is never
+   something a person has to remember.
+
+   Two shapes, one markup: down the left where there is room, which is the shape the decision
+   named and the one that leaves the whole width to the work; a row of tabs under a narrow window,
+   where a column of five nouns would cost more of the screen than the page it navigates. */
+.rail {
+  display: flex;
+  flex-direction: row;
+  gap: 0 1.4rem;
+  padding: .3rem 0 0;
+  margin: 0 0 1.4rem;
+  border-bottom: 1px solid var(--rule);
+  overflow-x: auto;
+}
+.rail a {
+  padding: .5rem .1rem;
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+.rail a:hover { color: var(--ink); }
+.rail a[aria-current="page"] {
+  color: var(--ink);
+  font-weight: 550;
+  border-bottom-color: var(--ink);
+}
+
+@media (min-width: 60rem) {
+  .wrap {
+    display: grid;
+    grid-template-columns: 13.5rem minmax(0, 1fr);
+    column-gap: 3rem;
+    align-items: start;
+  }
+  .bar, footer { grid-column: 1 / -1; }
+  .rail {
+    grid-column: 1;
+    flex-direction: column;
+    gap: .1rem;
+    padding: 0;
+    margin: 0;
+    border-bottom: 0;
+    overflow-x: visible;
+    position: sticky;
+    top: 1.5rem;
+  }
+  .rail a {
+    padding: .35rem .6rem;
+    border-bottom: 0;
+    border-left: 2px solid transparent;
+    border-radius: 0 var(--r) var(--r) 0;
+  }
+  .rail a:hover { background: var(--raise); }
+  .rail a[aria-current="page"] {
+    border-left-color: var(--ink);
+    background: var(--raise);
+  }
+  .sheet { grid-column: 2; min-width: 0; }
+}
+
+/* The heading row and the primary action on it (item 214). The action wraps under the title on a
+   narrow window rather than squeezing both, because a button that is half a word wide is not a
+   button. */
+.head { display: flex; flex-wrap: wrap; align-items: baseline;
+        justify-content: space-between; gap: .75rem 1.5rem; }
+.head h1 { margin-bottom: .2rem; }
+details.primary { margin: 0 0 .6rem; }
+details.primary > summary {
+  display: inline-block; list-style: none; cursor: pointer;
+  font: 550 var(--t-md)/1 var(--sans); padding: .55rem .9rem;
+  border: 1px solid color-mix(in oklab, var(--working) 40%, var(--rule));
+  border-radius: var(--r-chip); background: var(--raise); color: var(--working);
+}
+details.primary > summary::-webkit-details-marker { display: none; }
+details.primary > summary::before { content: "+"; margin-right: .4rem; font-weight: 600; }
+details.primary[open] > summary::before { content: "\\2212"; }
+details.primary > summary:hover { background: var(--sunk); }
+details.primary[open] {
+  flex: 1 1 100%; background: var(--raise); border: 1px solid var(--rule);
+  border-radius: var(--r); padding: var(--pad); margin-top: .4rem;
+}
+details.primary[open] > summary { border: 0; background: none; padding: .2rem 0 .4rem;
+                                  min-height: 24px; }
+
+/* The one control on the page that creates something (item 213). */
+.new { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin: 1.4rem 0 0; }
+.field { display: flex; flex-direction: column; gap: .3rem; margin: 0; }
+.field label { font: 550 var(--t-2xs)/1 var(--sans); letter-spacing: .06em;
+               text-transform: uppercase; color: var(--muted); }
+.field input {
+  font: 400 var(--t-md)/1 var(--mono); padding: .5rem .6rem; min-width: 12rem;
+  border: 1px solid var(--rule); border-radius: var(--r-chip);
+  background: var(--canvas); color: var(--ink);
+}
+.new button { align-self: end; }
+
 .decisions {
   list-style: none; padding: 0; margin: 0 0 1.4rem;
   background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r);
@@ -333,14 +569,14 @@ a:hover { text-decoration-color: currentColor; }
 }
 .decision { padding: .85rem var(--pad); border-top: 1px solid var(--rule); }
 .decision:first-child { border-top: 0; }
-.decision .what { display: block; font-weight: 550; font-size: .97rem; }
-.decision .meta { display: block; font: 400 .78rem/1.5 var(--mono); color: var(--muted);
+.decision .what { display: block; font-weight: 550; font-size: var(--t-base); }
+.decision .meta { display: block; font: 400 var(--t-sm)/1.5 var(--mono); color: var(--muted);
                   margin-top: .3rem; }
 .decision .decide { margin-top: .7rem; }
 .decision .sub { margin: .5rem 0 0; }
 /* The "how to sign in" line belongs to the card above it, not to the gap below. */
 .decisions + .how { margin: -1.1rem 0 1.4rem; padding: 0 var(--pad);
-                    font-size: .82rem; color: var(--muted); }
+                    font-size: var(--t-sm); color: var(--muted); }
 
 /* --- what it is doing ------------------------------------------------------------------------ */
 
@@ -354,7 +590,7 @@ a:hover { text-decoration-color: currentColor; }
 
 .phases { display: flex; flex-wrap: wrap; gap: .35rem; margin: .8rem 0 0; padding: 0;
           list-style: none; }
-.phase { font: 500 .72rem/1 var(--mono); letter-spacing: .02em;
+.phase { font: 500 var(--t-xs)/1 var(--mono); letter-spacing: .02em;
          padding: .38rem .5rem; border-radius: var(--r-chip);
          border: 1px solid var(--rule); color: var(--faint); }
 .phase.done { color: var(--passed);
@@ -365,12 +601,12 @@ a:hover { text-decoration-color: currentColor; }
               background: color-mix(in oklab, var(--working) 11%, transparent); }
 
 .chip { display: inline-flex; align-items: center; gap: .35rem;
-        font: 550 .72rem/1 var(--sans); letter-spacing: .02em;
+        font: 550 var(--t-xs)/1 var(--sans); letter-spacing: .02em;
         padding: .34rem .5rem; border-radius: var(--r-chip);
         border: 1px solid color-mix(in oklab, var(--c, var(--faint)) 35%, transparent);
         background: color-mix(in oklab, var(--c, var(--faint)) 9%, transparent);
         color: var(--c, var(--muted)); }
-.chip::before { content: "●"; font-size: .6em; }
+.chip::before { content: "●"; font-size: var(--t-2xs); }
 .c-working { --c: var(--working); } .c-waiting { --c: var(--waiting); }
 .c-passed  { --c: var(--passed);  } .c-refused { --c: var(--refused); }
 .c-idle    { --c: var(--faint);   } .c-human   { --c: var(--human);   }
@@ -386,12 +622,12 @@ a:hover { text-decoration-color: currentColor; }
   background: var(--sunk); border-radius: var(--r);
 }
 .tally { display: flex; align-items: baseline; gap: .4rem; }
-.fig { font: 550 1.05rem/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink);
+.fig { font: 550 var(--t-lg)/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink);
        font-feature-settings: "zero" 0; text-decoration: none; }
 a.fig { text-decoration-color: color-mix(in oklab, currentColor 35%, transparent); }
 a.fig:hover { text-decoration: underline; }
 .fig.zero { color: var(--faint); font-weight: 400; }
-.cap { font: 400 .74rem/1 var(--sans); color: var(--muted); letter-spacing: .01em; }
+.cap { font: 400 var(--t-xs)/1 var(--sans); color: var(--muted); letter-spacing: .01em; }
 
 /* --- the item's own views, which the first pass of item 169 left behind ---------------------- */
 
@@ -410,17 +646,28 @@ a.fig:hover { text-decoration: underline; }
 
 /* The project view's own copy of the board, which shares `_COLUMNS` with the instance strip so the
    two can never disagree about what a column means. */
-.board { display: flex; flex-wrap: wrap; gap: .6rem; margin: 0 0 1.2rem; }
-.col { flex: 1 1 8rem; background: var(--raise); border: 1px solid var(--rule);
+/* Six tallies in a wrapping row of five left `closed` alone across the full width, and two-word
+   labels broke over two lines so one row's cards stood taller than the next. A grid that fits its
+   own columns can do neither. */
+.board { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+         gap: .6rem; margin: 0 0 1.2rem; }
+.col { background: var(--raise); border: 1px solid var(--rule);
        border-radius: var(--r); padding: .8rem var(--pad); }
+/* `.count` had no rule at all — so a project's numbers rendered at paragraph size under labels
+   set in caps — the label outranking the number it labels, on the one view where you compare them.
+   The instance report sets the same pair at 34px and 11.5px. */
+.count { display: block; font: 600 var(--t-2xl)/1 var(--sans); color: var(--ink);
+         font-variant-numeric: tabular-nums; }
+.count.zero { color: var(--faint); font-weight: 450; }
 .col.owed { border-left: 3px solid var(--waiting); }
-.age { display: block; font: 400 .74rem/1 var(--sans); color: var(--muted); margin-top: .4rem; }
+.age { display: block; font: 400 var(--t-xs)/1 var(--sans); color: var(--muted);
+       margin-top: .4rem; }
 .faint { color: var(--faint); }
 
 /* --- the line that says the checks ran ------------------------------------------------------- */
 
 .settled { display: flex; align-items: baseline; gap: .45rem;
-           font-size: .82rem; color: var(--muted); margin: 0 0 1.4rem; }
+           font-size: var(--t-sm); color: var(--muted); margin: 0 0 1.4rem; }
 .settled::before { content: "✓"; color: var(--passed); font-weight: 600; }
 
 /* --- everything the evaluator wants, as one block rather than five rules --------------------- */
@@ -431,11 +678,11 @@ a.fig:hover { text-decoration: underline; }
 .more > details:first-child { border-top: 0; }
 details > summary {
   cursor: pointer; padding: .8rem var(--pad); list-style: none;
-  font: 500 .86rem/1.4 var(--sans); color: var(--muted);
+  font: 500 var(--t-md)/1.4 var(--sans); color: var(--muted);
   display: flex; align-items: center; gap: .55rem;
 }
 details > summary::-webkit-details-marker { display: none; }
-details > summary::before { content: "+"; font: 400 .9rem/1 var(--mono); color: var(--faint);
+details > summary::before { content: "+"; font: 400 var(--t-md)/1 var(--mono); color: var(--faint);
                             width: .7rem; text-align: center; }
 /* The typographic minus, which pairs the + above rather than a hyphen. */
 details[open] > summary::before { content: "\2212 "; }
@@ -445,18 +692,26 @@ details > summary:hover { color: var(--ink); background: var(--sunk); }
 
 /* --- type --------------------------------------------------------------------------------- */
 
-h1 { font: 600 1.35rem/1.25 var(--sans); letter-spacing: -.015em; margin: 0 0 .3rem;
+h1 { font: 600 var(--t-xl)/1.25 var(--sans); letter-spacing: -.015em; margin: 0 0 .3rem;
      text-wrap: balance; }
-h2 { font: 600 .78rem/1 var(--sans); letter-spacing: .07em; text-transform: uppercase;
+h2 { font: 600 var(--t-sm)/1 var(--sans); letter-spacing: .07em; text-transform: uppercase;
      color: var(--faint); margin: 1.8rem 0 .7rem; }
-h4 { font: 550 .72rem/1 var(--sans); letter-spacing: .06em; text-transform: uppercase;
+h4 { font: 550 var(--t-xs)/1 var(--sans); letter-spacing: .06em; text-transform: uppercase;
      color: var(--faint); margin: 0 0 .5rem; }
+/* A thing's own name, not a section label (item 213). `h2` is styled for headings like *what does
+   not add up*, and reusing it for a project gave a project the weight of a caption. */
+h2.name { font: 600 var(--t-lg)/1.25 var(--sans); letter-spacing: 0; text-transform: none;
+          color: var(--ink); margin: 2rem 0 .15rem; }
+/* A heading that is also a link is still a heading: underlined at rest it reads as body text that
+   happens to be big. The underline arrives on hover, where it answers "can I click this". */
+h2.name a { text-decoration: none; }
+h2.name a:hover { text-decoration: underline; }
 p { margin: .7rem 0; }
-.sub { font-size: .84rem; color: var(--muted); }
+.sub { font-size: var(--t-md); color: var(--muted); }
 .sub a { color: var(--ink); }
 .bad { color: var(--refused); }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-code { font: 400 .87em/1.4 var(--mono); background: var(--sunk); padding: .12em .32em;
+code { font: 400 var(--t-sm)/1.4 var(--mono); background: var(--sunk); padding: .12em .32em;
        border-radius: 4px; }
 ul, ol { margin: .7rem 0; padding-left: 1.2rem; }
 li { margin: .25rem 0; }
@@ -464,20 +719,21 @@ time { font-variant-numeric: tabular-nums; }
 
 /* --- tables, which are data and should look like it ----------------------------------------- */
 
-table { border-collapse: collapse; width: 100%; font-size: .87rem; }
+table { border-collapse: collapse; width: 100%; font-size: var(--t-md); }
 th { text-align: left; font-weight: 500; color: var(--muted); vertical-align: top;
      padding: .4rem 1rem .4rem 0; white-space: nowrap; }
 td { padding: .4rem 0; vertical-align: top; }
-table.list { font-size: .84rem; }
+table.list { font-size: var(--t-md); }
 table.list th { border-bottom: 1px solid var(--rule); padding-bottom: .5rem;
-                font: 550 .7rem/1 var(--sans); letter-spacing: .05em; text-transform: uppercase; }
+                font: 550 var(--t-2xs)/1 var(--sans); letter-spacing: .05em;
+                text-transform: uppercase; }
 table.list td { border-bottom: 1px solid var(--rule); padding: .5rem .8rem .5rem 0; }
 table.list tr:hover td { background: var(--sunk); }
 .wide { overflow-x: auto; }
 
 .facts { display: grid; grid-template-columns: auto 1fr; gap: .35rem 1rem; margin: 0; }
-.facts dt { color: var(--muted); font-size: .84rem; }
-.facts dd { margin: 0; font-family: var(--mono); font-size: .84rem; }
+.facts dt { color: var(--muted); font-size: var(--t-md); }
+.facts dd { margin: 0; font-family: var(--mono); font-size: var(--t-md); }
 
 /* --- the forms that decide ------------------------------------------------------------------- */
 
@@ -486,21 +742,21 @@ button.linkish { background: none; border: 0; padding: 0; font: inherit; color: 
                  text-decoration: underline; cursor: pointer; }
 .decide { display: flex; gap: .5rem; flex-wrap: wrap; }
 .decide form { margin: 0; }
-.decide button, .login button {
-  font: 550 .84rem/1 var(--sans); padding: .5rem .85rem; border-radius: var(--r-chip);
+.decide button, .login button, .new button {
+  font: 550 var(--t-md)/1 var(--sans); padding: .5rem .85rem; border-radius: var(--r-chip);
   cursor: pointer; border: 1px solid var(--rule); background: var(--raise); color: var(--ink);
 }
-.decide button:hover, .login button:hover { background: var(--sunk); }
+.decide button:hover, .login button:hover, .new button:hover { background: var(--sunk); }
 .decide button.go { border-color: color-mix(in oklab, var(--passed) 45%, transparent);
                     color: var(--passed); }
 .decide button.go:hover { background: color-mix(in oklab, var(--passed) 9%, transparent); }
 .login { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: 0; }
 .login input {
-  font: 400 .88rem/1 var(--mono); padding: .5rem .6rem; min-width: 18rem; flex: 1 1 18rem;
+  font: 400 var(--t-md)/1 var(--mono); padding: .5rem .6rem; min-width: 18rem; flex: 1 1 18rem;
   border: 1px solid var(--rule); border-radius: var(--r-chip);
   background: var(--canvas); color: var(--ink);
 }
-.stuck { font: 600 .64rem/1 var(--sans); letter-spacing: .05em; text-transform: uppercase;
+.stuck { font: 600 var(--t-2xs)/1 var(--sans); letter-spacing: .05em; text-transform: uppercase;
          color: var(--refused); border: 1px solid currentColor; border-radius: var(--r-chip);
          padding: .16rem .34rem; margin-left: .35rem; }
 
@@ -508,12 +764,13 @@ button.linkish { background: none; border: 0; padding: 0; font: inherit; color: 
 
 details.evidence > summary { font-family: var(--mono); }
 pre { background: var(--sunk); border: 1px solid var(--rule); border-radius: var(--r);
-      padding: .9rem 1rem; overflow-x: auto; font: 400 .8rem/1.5 var(--mono); margin: .8rem 0; }
+      padding: .9rem 1rem; overflow-x: auto; font: 400 var(--t-sm)/1.5 var(--mono);
+      margin: .8rem 0; }
 details > pre { border-left-width: 3px; }
 
 footer {
   margin: 2.5rem 0 0; padding-top: 1.1rem; border-top: 1px solid var(--rule);
-  font-size: .78rem; color: var(--faint);
+  font-size: var(--t-sm); color: var(--faint);
 }
 footer strong { color: var(--muted); font-weight: 550; }
 
@@ -523,7 +780,7 @@ footer strong { color: var(--muted); font-weight: 550; }
 
 @media (max-width: 40rem) {
   .wrap { padding: 0 1rem 3rem; }
-  .lede { font-size: 1.3rem; }
+  .lede { font-size: var(--t-xl); }
   .tally { flex: 1 1 45%; border-right: 0; border-bottom: 1px solid var(--rule); }
 }
 """
@@ -583,6 +840,7 @@ def _document(
     acting: Acting = READING,
     up: str = "",
     state: tuple[str, str] | None = None,
+    here: str = "",
 ) -> str:
     """The whole page. No script, no external asset, one inlined stylesheet.
 
@@ -611,11 +869,50 @@ def _document(
         f"<title>{_h(title)}</title><style>{_STYLE}</style></head><body>\n"
         '<div class="wrap">\n'
         f"{_bar(up=up, state=state)}\n"
-        f"{body}\n"
+        # **Every page, from here** (item 212). Rendering it per view is four chances to grow four
+        # opinions about what this product contains, which is the drift five items this week each
+        # cost a day to.
+        f"{_rail(acting, here=here, up=up)}\n"
+        # **And the way in, for the same reason.** It lived inside the instance report, so moving
+        # the front door left a locked-out operator landing on a page that said nothing about the
+        # lockout — a working lockout looking like a broken login, which is the exact failure item
+        # 168 fixed once already.
+        f'<main class="sheet">{_signing_in(acting, up=up)}\n{body}</main>\n'
         f"<footer>Hullwork {_h(__version__)} — {footing}</footer>\n"
         "</div>\n"
         "</body></html>\n"
     )
+
+
+#: The nouns this product has, and the order somebody meets them. Item 212, DR-0023.
+#:
+#: Navigation as furniture: a person should never have to remember what exists. The last two are the
+#: operator's — DR-0021 gives a read link the instance and nothing that administers it — and a
+#: control that leads to a `404` is worse than one that is not there, so a reader is shown neither.
+_NOUNS: tuple[tuple[str, str, bool], ...] = (
+    ("./", "Items", False),
+    ("projects", "Projects", False),
+    ("instance", "This instance", False),
+    ("doctor", "Why it will not work", True),
+    ("config", "What it received", True),
+)
+
+
+def _rail(acting: Acting, *, here: str = "", up: str = "") -> str:
+    """The sidebar every page carries, from one function.
+
+    Four pages growing four opinions about what this product contains is the drift items 193, 194,
+    200, 203 and 211 each cost a day to. This is that lesson applied before it happens rather than
+    after.
+    """
+    links = "".join(
+        f'<a href="{up}{where}"'
+        + (' aria-current="page"' if where == here else "")
+        + f">{_h(name)}</a>"
+        for where, name, operators_only in _NOUNS
+        if not operators_only or acting.csrf
+    )
+    return f'<nav class="rail" aria-label="Sections">{links}</nav>'
 
 
 def _bar(*, up: str, state: tuple[str, str] | None) -> str:
@@ -913,6 +1210,39 @@ def _board(session: Session) -> str:
 DECISIONS_SHOWN = 5
 
 
+def does_this_need_you(
+    session: Session, settings: Settings, acting: Acting, *, error_reporting: bool
+) -> tuple[str, tuple[str, str]]:
+    """The answer, and the work behind it. Item 212, DR-0023.
+
+    This was the top of the instance report, which is where everything was. Moving the front door
+    to the items would have left it behind — so a person opening the page would meet a table of
+    rows and have to read them to learn whether any of it wanted them, which is the question item
+    167 built the lede to answer without reading.
+
+    It computes its own readiness rather than taking it, because the front door has no report to
+    hand it. **`error_reporting` is passed and not assumed**: the first version hardcoded `False`
+    here, so the front door opened on a red headline — *HULLWORK_ERROR_DSN is set but error
+    reporting is not running* — about an instance where it was running. Seen on the deployed page,
+    not by any test, which is why the test below compares the two views' answers instead of
+    asserting a shape.
+    """
+    from hullwork import readiness
+
+    report = readiness.check(session, settings, error_reporting=error_reporting)
+    waiting = list(
+        session.scalars(
+            select(_Item)
+            .where(_Item.state == ItemState.WAITING_APPROVAL)
+            .order_by(_Item.state_since.is_(None), _Item.state_since)
+        ).all()
+    )
+    # The pill goes with it, because it answers the reader's second question — *is this thing
+    # working* — and it was on the bar of the view that stopped being the front door.
+    badge = ("ready", "ok") if report.ready else ("degraded", "bad")
+    return _lede(session, report, waiting=waiting) + _deciding(waiting, acting), badge
+
+
 def _lede(session: Session, report: object, *, waiting: list[_Item]) -> str:
     """One sentence, in the largest type on the page, answering *does this need me*. Item 167.
 
@@ -1148,6 +1478,153 @@ def _violations_in(seal: object) -> bool:
     return bool(seal.get("violations"))
 
 
+_TERMINAL_CODE = re.compile(r"`([^`]+)`")
+
+
+def _as_code(said: str) -> str:
+    """`like this` becomes code, because these sentences were written for a terminal.
+
+    Seen by opening the page rather than by reading the source: every detail in both panels comes
+    from a string a command prints, where a backtick is punctuation an eye skips. Rendered into HTML
+    they are literal backticks, and a literal backtick beside a command name reads as a typo in the
+    product rather than as a quotation in it.
+
+    Escaped first, then marked up — never the other way round, or a detail containing `<` would be
+    escaping something this function had just written.
+
+    The same is true of the emphasis, and this function did not handle it: `deliveries` says a
+    tracker is configured and no delivery has ever arrived, with the second half emphasised, and
+    the page served two pairs of literal asterisks. `_own_prose` carries the argument for why this
+    is safe on any input — by the time the substitution runs every `<` is already `&lt;`, so it
+    cannot assemble markup out of a project slug that came from somebody else's tracker.
+    """
+    return _emphasised(
+        _TERMINAL_CODE.sub(lambda found: f"<code>{found.group(1)}</code>", _h(said))
+    )
+
+
+def _titled(one: object) -> str:
+    """A finding calls it `check` and a standing calls it `name`; both mean the same thing."""
+    return str(getattr(one, "check", None) or getattr(one, "name", ""))
+
+
+def _rows_for_standing(rows: Sequence[object]) -> str:
+    """The panel's rows, for both views. Items 203 and 208.
+
+    **One renderer, because two that happen to look alike is how the borrowed list ended up in
+    both of them** — and how a fix to one would leave the other painting a `cannot` amber.
+
+    Takes anything with `check`/`name`, a state and a `detail`, which is what `doctor.Finding` and
+    `features.Standing` both are. A decision reads quiet and a fault reads red: DR-0019 in colour,
+    because painting a choice somebody made as a defect tells them to go and repair it.
+    """
+    said = []
+    for one in rows:
+        state = getattr(one, "state", "")
+        word = getattr(state, "value", state)
+        broken = word in ("broken", "cannot")
+        said.append(
+            f'<li class="c-{"refused" if broken else "idle"}">'
+            f'<span class="pill">{_h(word)}</span>'
+            f'<span class="name">{_h(_titled(one))}</span>'
+            f'<p class="why">{_as_code(getattr(one, "detail", ""))}</p></li>'
+        )
+    return "".join(said)
+
+
+def why_it_will_not_work(
+    session: Session, settings: Settings, *, acting: Acting = READING
+) -> str:
+    """`doctor`, for somebody without a shell. Item 208, DR-0022.
+
+    **The findings, not a second diagnosis.** `doctor.examine` already returns them and item 199's
+    pre-flight already renders them elsewhere; a page that asked its own questions would drift from
+    the command an operator quotes in a bug report.
+
+    `not_from_here`'s downgrade comes with them and must: the receiver is not the dispatcher, and a
+    page reporting the model credential missing — on an instance where it is present in the half
+    that uses it — sends somebody to repair a working machine.
+    """
+    from hullwork import doctor as doctor_module
+
+    found = doctor_module.examine(
+        session,
+        settings,
+        code_forge=None,
+        env_file=Path(settings.deployment_env_file or ".env"),
+        compose_file=(
+            Path(settings.deployment_compose_file) if settings.deployment_compose_file else None
+        ),
+    )
+    worrying = [one for one in found if one.state is not doctor_module.State.OK]
+    rows = _rows_for_standing(worrying)
+    body = (
+        "<h1>Why it will not work</h1>"
+        + (
+            f'<ul class="standing">{rows}</ul>'
+            f'<p class="sub">{len(found) - len(worrying)} of {len(found)} check(s) are fine.</p>'
+            if worrying
+            else f'<p class="sub">All {len(found)} check(s) are fine.</p>'
+        )
+    )
+    return _document("Hullwork — doctor", body, acting=acting, here="doctor")
+
+
+def what_it_received(settings: Settings, *, acting: Acting = READING) -> str:
+    """`config`, for somebody without a shell. Item 208.
+
+    **No credential is printed**, and that is `settings_report`'s property rather than this
+    function's: a secret reads `set` or `not set` before it ever reaches here. Worth saying because
+    `config` reads like the most disclosing thing in the product and is in fact the most carefully
+    disclosing thing in it.
+    """
+    from hullwork import settings_report
+
+    rows = "".join(
+        f"<tr><th>{_h(name)}</th><td>{_h(value)}</td>"
+        f"<td>{_h(source)}</td><td>{_h(reaches)}</td></tr>"
+        for name, value, source, reaches in settings_report.rows(settings)
+    )
+    body = (
+        "<h1>What it received</h1>"
+        '<p class="sub">What this process was handed, which is a different question from what you '
+        "wrote in a file. No credential is printed: a secret reads <code>set</code> or "
+        "<code>not set</code>.</p>"
+        '<div class="wide"><table><tr><th>variable</th><th>value</th><th>from</th>'
+        f"<th>reaches</th></tr>{rows}</table></div>"
+    )
+    return _document(
+        "Hullwork — configuration", body, acting=acting, here="config"
+    )
+
+
+def _what_this_instance_has_switched_on(session: Session, settings: Settings) -> str:
+    """The feature-by-feature standing, worst first. Item 203.
+
+    **From `features.on_this_instance`, which the terminal prints too**, so the page and
+    `hullwork status` cannot come to disagree about the same instance — the rule `instance`'s own
+    docstring states about its numbers, applied to its states.
+
+    An instance with everything on says so in one line: fourteen green rows is a wall a reader stops
+    looking at, and the thing they came for is whichever one is not green.
+    """
+    from hullwork import features
+
+    standing = features.on_this_instance(session, settings)
+    worrying = [one for one in standing if one.state is not features.ON]
+    if not worrying:
+        return (
+            '<p class="sub">Every feature this instance can have is on. '
+            f"{len(standing)} of {len(standing)}.</p>"
+        )
+    rows = _rows_for_standing(worrying)
+    on = len(standing) - len(worrying)
+    return (
+        f'<ul class="standing">{rows}</ul>'
+        f'<p class="sub">{on} of {len(standing)} feature(s) on.</p>'
+    )
+
+
 def instance(
     session: Session, settings: Settings, *, error_reporting: bool, acting: Acting = READING
 ) -> str:
@@ -1216,13 +1693,6 @@ def instance(
     )
 
     prices = spend.Prices.from_settings(settings)
-    waiting = list(
-        session.scalars(
-            select(_Item)
-            .where(_Item.state == ItemState.WAITING_APPROVAL)
-            .order_by(_Item.state_since.is_(None), _Item.state_since)
-        ).all()
-    )
 
     #: **The order is the item, and not the order this page had.** the interface document
     #: asks three questions — on fire, what is it doing, is anything waiting on me — and it answered
@@ -1230,8 +1700,10 @@ def instance(
     #: context second: a problem or a decision is something to *do*, and what the machine is busy
     #: with is something to *know*.
     body = (
-        _lede(session, report, waiting=waiting)
-        + _deciding(waiting, acting)
+        # The answer and the decisions are the front door's now (item 212). They are still here,
+        # from the same function, because an operator who opens the report on a bad morning should
+        # not have to go back to learn whether anything wants them.
+        does_this_need_you(session, settings, acting, error_reporting=error_reporting)[0]
         + _proof(
             session,
             merged=merged,
@@ -1242,12 +1714,18 @@ def instance(
         + _now(session, prices)
         + _strip(session)
         + _disagreements(session, settings)
-        + '<p class="sub"><a href="items">Every item and its evidence</a> · '
-        '<a href="projects">Projects</a></p>'
+        # **Above the folds, not inside one** (item 203). What is off and what cannot work is the
+        # reason somebody opened this; the configuration table below is what they read afterwards.
+        + _what_this_instance_has_switched_on(session, settings)
+        # The link row that used to live here is the rail now (item 212): two sets of navigation
+        # on one page is two places to add the next noun to, and one of them will be forgotten.
         + '<div class="more">'
-        + _signing_in(acting)
         + _fold(
-            "How this instance is configured",
+            # **Renamed once a real configuration page existed** (item 211). These seven rows are
+            # state — version, forge, sweep, backlog — and calling them *configured* was harmless
+            # while nothing else claimed the word. `/config` claims it now, and two things with one
+            # name is the drift this repository has spent a week removing.
+            "How it is right now",
             f'<div class="wide"><table>{table}</table></div>',
         )
         # Before the attempts block, exactly as `status` orders them: this one has *what arrived*
@@ -1266,7 +1744,9 @@ def instance(
     # The instance's own state, on the bar rather than in a folded table: it is the second question
     # a reader has, and item 167 had buried it under a disclosure.
     badge = ("ready", "ok") if report.ready else ("degraded", "bad")
-    return _document("Hullwork — this instance", body, acting=acting, state=badge)
+    return _document(
+        "Hullwork — this instance", body, acting=acting, state=badge, here="instance"
+    )
 
 
 #: How many rows a list shows. Bounded because an instance that has been running for a year has
@@ -1311,9 +1791,12 @@ def _project_health(project: _Project) -> tuple[str, str]:
                 "cached manifest no longer validates, so every error from here lands red until "
                 "`hullwork projects refresh` adopts a working one",
             )
+    # `_as_code`, not `_h` (item 213). These two sentences were written for a terminal — one of
+    # them names `hullwork projects refresh` — and escaping them served the backticks, which beside
+    # a command name reads as a typo in the product rather than as a quotation of it.
     return (
-        f'<li class="{credential[0]}">{_h(credential[1])}</li>'
-        f'<li class="{manifest[0]}">{_h(manifest[1])}</li>',
+        f'<li class="{credential[0]}">{_as_code(credential[1])}</li>'
+        f'<li class="{manifest[0]}">{_as_code(manifest[1])}</li>',
         credential[0] + manifest[0],
     )
 
@@ -1362,7 +1845,114 @@ def _project_cost(session: Session, project_id: int, prices: Prices | None) -> s
     ) + "</ul>"
 
 
-def projects(session: Session, settings: Settings) -> str:
+def _what_was_rotated(rotated: tuple[str, str | None] | None) -> str:
+    """A new webhook secret, once — and what it broke, before the value rather than after.
+
+    Minting one is item 206's problem and this is that plus one: rotating **stops the URL the
+    tracker is currently posting to**. Somebody who reads the new value and not that sentence has a
+    working instance that receives nothing, which is the failure this product exists to notice and
+    the worst one to cause.
+    """
+    if rotated is None or rotated[1] is None:
+        return ""
+    slug, token = rotated
+    return (
+        f"<h2>{_h(slug)} has a new webhook secret</h2>"
+        "<p><b>The URL your tracker was posting to has stopped working</b> — update it before the "
+        "next error, or nothing arrives. <b>This is the only time the new one is shown</b>: only "
+        "its hash is stored.</p>"
+        f'<pre class="wide"><code>/webhooks/glitchtip/{_h(slug)}/{_h(token)}</code></pre>'
+    )
+
+
+def _refusal(said: str | None) -> str:
+    """A refusal in the command's own words. Item 206.
+
+    `add_project` raises with a sentence per problem — a manifest that does not parse names the key,
+    a repository the token cannot read says which, a slug already taken says so. A page that
+    replaced
+    those with *something went wrong* would send somebody to a shell to find out what it already
+    knew, which is the whole thing DR-0022 is closing.
+    """
+    return f'<p class="sub c-refused">{_h(said)}</p>' if said else ""
+
+
+def _the_form(acting: Acting, *, answered: str = "") -> str:
+    """The primary action: a button above the list, and the three fields behind it. Item 214.
+
+    It was a form at the bottom of this page, under every project the instance already had, so
+    registering the second one meant scrolling past the first. DR-0023 read the opposite off
+    GlitchTip — *the primary action is a button, top right, always* — and item 212 built everything
+    in that decision except this.
+
+    **`answered` is what came back from the last submission**, and it is why the drawer has a state
+    at all. A form behind a disclosure that re-renders closed returns the reader to a button with
+    the refusal hidden inside it, which reads as a page that ignored them; and a webhook secret is
+    shown once, so a closed drawer over one is data loss wearing a layout bug's clothes.
+
+    No form for a reader with a link: DR-0021 gives them reading, and a control they cannot submit
+    is
+    worse than one that is not there. The CSRF token is the session's, exactly as the two decisions
+    on an item carry it.
+    """
+    if not acting.csrf:
+        return ""
+    # **A visible label, not only an `aria-label`** (item 213). The assistive name was there; what
+    # was missing is the one a sighted person needs — a placeholder disappears exactly when it is
+    # needed, which is the moment somebody has typed into the field and looks up to check.
+    fields = "".join(
+        f'<p class="field"><label for="new-{name}">{_h(label)}</label>'
+        f'<input id="new-{name}" name="{name}"{extra}></p>'
+        for name, label, extra in (
+            ("slug", "Name it here", ' placeholder="shop" required'),
+            ("repo", "Repository", ' placeholder="owner/name" required'),
+            ("forge", "Forge", ' value="forgejo"'),
+        )
+    )
+    return (
+        f'<details class="primary"{" open" if answered else ""}>'
+        "<summary>Connect a project</summary>"
+        + answered
+        + '<form method="post" action="projects" class="new">'
+        + f'<input type="hidden" name="csrf" value="{_h(acting.csrf)}">'
+        + fields
+        + "<button type=\"submit\">Connect it</button></form>"
+        + '<p class="sub">It reads <code>hullwork.yml</code> from the default branch and refuses '
+        "anything it cannot validate. Nothing is written to your repository.</p>"
+        + "</details>"
+    )
+
+
+def _what_was_just_made(made: object) -> str:
+    """The webhook URL, once. Item 206, and the sentence DR-0022 requires beside it.
+
+    A copy-exactly-once value is worse in a browser than in a terminal — scrollback, history, a
+    screenshot — so this says plainly that it is the only time, rather than being withheld. Only the
+    hash is stored, exactly as the command stores it, so no later view can show it again.
+    """
+    if made is None:
+        return ""
+    project = getattr(made, "project", None)
+    token = getattr(made, "token", "")
+    slug = getattr(project, "slug", "")
+    return (
+        f'<h2>{_h(slug)} is connected</h2>'
+        "<p>Point your error tracker's webhook at this. <b>This is the only time it is shown</b> — "
+        "only its hash is stored, so nobody, including this page, can print it again. Lose it and "
+        "<code>hullwork projects rotate-secret</code> issues another, which stops the old one.</p>"
+        f'<pre class="wide"><code>/webhooks/glitchtip/{_h(slug)}/{_h(token)}</code></pre>'
+    )
+
+
+def projects(
+    session: Session,
+    settings: Settings,
+    *,
+    acting: Acting = READING,
+    just_made: object = None,
+    refused: str | None = None,
+    rotated: tuple[str, str | None] | None = None,
+) -> str:
     """Every project this instance serves. Item 142, and the level the tree was missing.
 
     The page had instance, items and one item; a project appeared as a *column* in a list. That was
@@ -1376,21 +1966,20 @@ def projects(session: Session, settings: Settings) -> str:
     """
     prices = spend.Prices.from_settings(settings)
     found = list(session.scalars(select(_Project).order_by(_Project.slug)).all())
+    answered = _what_was_just_made(just_made) + _what_was_rotated(rotated) + _refusal(refused)
     if not found:
         body = (
-            "<h1>Projects</h1>"
-            '<p class="sub"><a href=".">This instance</a> · '
-            '<a href="items">Items and their evidence</a></p>'
-            "<p>No project is registered. `hullwork projects add` connects one, and "
-            "`hullwork propose --checkout PATH` prints a manifest to start from.</p>"
+            '<div class="head"><h1>Projects</h1>'
+            + _the_form(acting, answered=answered)
+            + "</div><p>No project is registered yet.</p>"
         )
-        return _document("Hullwork — projects", body)
+        return _document("Hullwork — projects", body, acting=acting, here="projects")
 
-    blocks = []
+    blocks: list[str] = []
     for project in found[:MAX_ITEMS]:
         health, _ = _project_health(project)
         blocks.append(
-            f'<h2><a href="projects/{_h(project.slug)}">{_h(project.slug)}</a></h2>'
+            f'<h2 class="name"><a href="projects/{_h(project.slug)}">{_h(project.slug)}</a></h2>'
             f'<p class="sub">{_h(project.forge)} · {_h(project.repo)}'
             f"{'' if project.active else ' · not active'}</p>"
             f"<ul>{health}</ul>"
@@ -1402,15 +1991,16 @@ def projects(session: Session, settings: Settings) -> str:
         else ""
     )
     body = (
-        "<h1>Projects</h1>"
+        '<div class="head"><h1>Projects</h1>'
+        + _the_form(acting, answered=answered)
+        + "</div>"
         '<p class="sub">Read-only. One instance serves one forge, so this is every project '
-        'on this one. <a href=".">This instance</a> · '
-        '<a href="items">Items and their evidence</a></p>'
+        "on this one.</p>"
         + bound
         + "".join(blocks)
     )
     del prices
-    return _document("Hullwork — projects", body)
+    return _document("Hullwork — projects", body, acting=acting, here="projects")
 
 
 def project(session: Session, settings: Settings, slug: str) -> str | None:
@@ -1585,7 +2175,16 @@ _NOT_STORED = (
 )
 
 
-def items(session: Session, *, only: str | None = None, acting: Acting = READING) -> str:
+def items(
+    session: Session,
+    *,
+    only: str | None = None,
+    acting: Acting = READING,
+    here: str = "",
+    settings: Settings | None = None,
+    front: bool = False,
+    error_reporting: bool = False,
+) -> str:
     """Every item this instance has, most recent first. The view a reviewer lands on.
 
     `only` is one of the board's column keys, which is what makes a count on the front page lead
@@ -1640,11 +2239,15 @@ def items(session: Session, *, only: str | None = None, acting: Acting = READING
 
     scope = "" if states is None else f" in <strong>{_h(only)}</strong>"
     if rows:
+        # **The widest table in the product, and the only one that was not allowed to scroll**
+        # (item 215). Seven columns on the view a person lands on: without this the body itself
+        # scrolls sideways on a narrow window, which moves the navigation while you read a title.
         table = (
-            '<table class="list"><tr><th>item</th><th>project</th><th>state</th><th>lane</th>'
+            '<div class="wide"><table class="list">'
+            "<tr><th>item</th><th>project</th><th>state</th><th>lane</th>"
             "<th>title</th><th>last seen</th><th>issue / pull</th></tr>"
             + "".join(body_rows)
-            + "</table>"
+            + "</table></div>"
         )
         # The bound, stated. Silently showing 200 of 4,000 is how a page teaches a reader that an
         # instance has done less than it has.
@@ -1660,14 +2263,38 @@ def items(session: Session, *, only: str | None = None, acting: Acting = READING
             if states is not None
             else "No items yet. Nothing has arrived from the error tracker on this instance"
         )
+        # **The emptiness has a cause and the cause has an action** (item 214). On an instance with
+        # no projects the sentence above is true and useless: nothing arrived because nothing is
+        # connected, and what to do about it was two clicks and a scroll away. Only offered to
+        # somebody who could act on it, and only when there is genuinely nothing to connect from.
+        if states is None and front and acting.csrf and not session.scalar(
+            select(func.count()).select_from(_Project)
+        ):
+            shown += (
+                '. <a href="projects">Connect a project</a> and its errors land here'
+            )
 
-    everything = '' if states is None else ' · <a href="items">All items</a>'
-    body = (
-        "<h1>Items</h1>"
-        f'<p class="sub">{shown}{scope}. Most recently seen first. '
-        f'<a href="./">Instance</a>{everything}</p>' + table
+    everything = '' if states is None else ' <a href="items">All items</a>'
+    # **The answer first, and only where this is the front door** (item 212). On `items?in=queued`
+    # it would be answering a question the reader did not ask. Asked for by the route rather than
+    # inferred from `settings` being present, because a headline that vanishes when a caller forgets
+    # an argument is a first screen that can silently stop saying the one thing it is for.
+    if front and settings is None:  # pragma: no cover - a wiring mistake, not a state
+        raise TypeError("the front door needs settings: it renders the instance's own answer")
+    answer, badge = (
+        does_this_need_you(session, settings, acting, error_reporting=error_reporting)
+        if front and settings
+        else ("", None)
     )
-    return _document("Hullwork — items", body, acting=acting)
+    # **Only what is true of what is on screen.** *Most recently seen first* under an empty list
+    # describes an order there is nothing to order, and the link to the instance was a second copy
+    # of a noun the rail already carries.
+    order = " Most recently seen first." if rows else ""
+    body = (
+        answer + "<h1>Items</h1>"
+        f'<p class="sub">{shown}{scope}.{order}{everything}</p>' + table
+    )
+    return _document("Hullwork — items", body, acting=acting, here=here, state=badge)
 
 
 def _above_the_fold(attempt: Attempt, prices: Prices | None) -> str:
@@ -1782,6 +2409,36 @@ def _decide(found: Item, acting: Acting, *, up: str) -> str:
     return ""
 
 
+def just_the_login(acting: Acting) -> str:
+    """The login and nothing else, for the door that replaces the token (DR-0021, item 204).
+
+    **Nothing about the instance is on it.** A page showing a name, a version or a count beside the
+    password would answer questions for somebody who has not signed in — and the whole reason
+    this path may exist at all is that it discloses one thing: this host has a login.
+
+    Reuses `_login` and `_document` because a second form would be a second thing to keep correct,
+    and the correct one has `autocomplete="current-password"` and a real `<form>` in it for reasons
+    item 168 measured.
+
+    **And it does not use `_document`.** Written that way first, and the visible text came out
+    as `▚ hullwork · Hullwork 0.1.0a8 — read-only…` — the instance's name
+    and its exact version, on the one page a prober can reach. A version tells somebody which
+    advisories to go and read. Found by a test that asserted the principle and had to be fixed
+    before it could measure it.
+    """
+    return (
+        "<!doctype html>\n"
+        '<html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="referrer" content="no-referrer">'
+        f'<link rel="icon" href="{_FAVICON}">'
+        f"<title>Sign in</title><style>{_STYLE}</style></head><body>\n"
+        '<div class="wrap">'
+        f'<h1 class="what">Sign in</h1>{_login(acting, up="")}'
+        "</div></body></html>\n"
+    )
+
+
 def _login(acting: Acting, *, up: str) -> str:
     """The login, or what to run when there is nothing to log in to. Item 168.
 
@@ -1804,7 +2461,7 @@ def _login(acting: Acting, *, up: str) -> str:
     )
 
 
-def _signing_in(acting: Acting) -> str:
+def _signing_in(acting: Acting, *, up: str = "") -> str:
     """A way in that does not depend on there being something to decide. Item 168.
 
     **Found by opening the deployed page on a calm day.** The login lived inside the list of
@@ -1825,7 +2482,7 @@ def _signing_in(acting: Acting) -> str:
         '<p class="sub">No password is set on this instance. Run <code>hullwork password</code> on '
         "the host, once, and this becomes a login.</p>"
     )
-    inside = _login(acting, up="") if acting.offered else nothing_set
+    inside = _login(acting, up=up) if acting.offered else nothing_set
     return f'<details><summary>Sign in</summary><div class="folded">{inside}</div></details>'
 
 
