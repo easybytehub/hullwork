@@ -267,6 +267,7 @@ def ready(
 )
 def page_instance(
     token: str,
+    request: Request,
     session: Annotated[Session, Depends(_readiness_session)],
 ) -> RedirectResponse:
     """The door. Item 122, and everything about it is in `hullwork.page`.
@@ -278,11 +279,7 @@ def page_instance(
     `GET` only, and that is asserted by walking the application's routes rather than by trusting
     this decorator to stay a `get`.
     """
-    if not page.opens(session, token):
-        # **The same body Starlette gives an unknown path**, not a friendlier one: a distinct
-        # message is a yes. Measured while writing the test — the default is `{"detail":"Not
-        # Found"}` and `"not found"` would have told a prober that this route exists.
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    _may_read(session, request, token)
     # **To the same URL with a slash, and the reason is the token.** Under `/page/{token}/` every
     # link between views is relative — `items`, `../items` — so the credential never has to be
     # written into the HTML to get from one page to the next. Saved HTML, a screenshot of the
@@ -307,15 +304,53 @@ def page_instance_index(
     session: Annotated[Session, Depends(_readiness_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> HTMLResponse:
-    """The instance view itself. Everything about it is in `hullwork.page`."""
-    if not page.opens(session, token):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    """The front door, which is the work rather than the arithmetic about it (item 212, DR-0023).
+
+    It was the instance report until this item: 357 words, 11 numbers and 14 sentences before a
+    person could do anything. The report is a noun in the rail now, with every number it had.
+
+    **The one route where a refusal is not a `404`** (DR-0021): with a password configured and no
+    session, this is where somebody acquires one, or the door that replaces the token has no handle.
+    What that discloses is that this host runs something with a login, and nothing else — and an
+    instance that never set a password is `404` here like everywhere else.
+    """
+    shut = _the_login_if_offered(session, request, token)
+    if shut is not None:
+        return shut
+    acting = _may_read(session, request, token)
+    return HTMLResponse(
+        page.items(
+            session,
+            acting=acting,
+            here="./",
+            settings=settings,
+            front=True,
+            error_reporting=_reporting_enabled,
+        ),
+        headers=page.HEADERS,
+    )
+
+
+@app.get(
+    f"{page.PREFIX}/{{token}}/instance",
+    tags=["page"],
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def page_instance_report(
+    token: str,
+    request: Request,
+    session: Annotated[Session, Depends(_readiness_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> HTMLResponse:
+    """Every number this instance keeps. Moved off the front door by item 212, not dropped."""
+    acting = _may_read(session, request, token)
     return HTMLResponse(
         page.instance(
             session,
             settings,
             error_reporting=_reporting_enabled,
-            acting=_acting(session, request),
+            acting=acting,
         ),
         headers=page.HEADERS,
     )
@@ -334,8 +369,7 @@ def page_items(
     in_: Annotated[str | None, Query(alias="in")] = None,
 ) -> HTMLResponse:
     """Every item, most recent first. Item 123."""
-    if not page.opens(session, token):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    _may_read(session, request, token)
     return HTMLResponse(
         page.items(session, only=in_, acting=_acting(session, request)), headers=page.HEADERS
     )
@@ -349,13 +383,14 @@ def page_items(
 )
 def page_projects(
     token: str,
+    request: Request,
     session: Annotated[Session, Depends(_readiness_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> HTMLResponse:
     """Every project this instance serves. Item 142, the level the tree was missing."""
-    if not page.opens(session, token):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
-    return HTMLResponse(page.projects(session, settings), headers=page.HEADERS)
+    _may_read(session, request, token)
+    acting = _acting(session, request)
+    return HTMLResponse(page.projects(session, settings, acting=acting), headers=page.HEADERS)
 
 
 @app.get(
@@ -366,6 +401,7 @@ def page_projects(
 )
 def page_project(
     token: str,
+    request: Request,
     slug: str,
     session: Annotated[Session, Depends(_readiness_session)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -376,8 +412,7 @@ def page_project(
     body would let somebody with a valid token enumerate which clients an instance serves — a fact
     about a consultancy's customers as much as about this deployment.
     """
-    if not page.opens(session, token):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    _may_read(session, request, token)
     rendered = page.project(session, settings, slug)
     if rendered is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
@@ -403,8 +438,7 @@ def page_item(
     used to count an instance's items from outside — though anyone who has got this far holds the
     token and could simply read the list.
     """
-    if not page.opens(session, token):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    _may_read(session, request, token)
     rendered = page.item(session, settings, item_id, acting=_acting(session, request))
     if rendered is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
@@ -442,6 +476,73 @@ async def _field(request: Request, name: str) -> str | None:
     return None
 
 
+def _may_read(session: Session, request: Request, token: str) -> page.Acting:
+    """The one gate every page route asks, and it returns what the renderer needs. Item 204.
+
+    **One place, not nine.** Each route used to decide this for itself, and DR-0021 gives the answer
+    a second input — a session may read at the reserved path — so nine copies would be nine chances
+    to add it in eight of them. That is the defect items 193, 194, 200 and 203 each cost a day to,
+    and this is auth, where the cost of getting it wrong is not a wrong number on a page.
+
+    Raises the `404` itself, with the body Starlette gives an unknown path: a distinct message is a
+    yes.
+    """
+    acting = _acting(session, request)
+    if not page.opens(session, token, acting=acting):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    return acting
+
+
+def _the_login_if_offered(
+    session: Session, request: Request, token: str
+) -> HTMLResponse | None:
+    """The login, when this request may not read yet and may be told how to. Item 204.
+
+    Returned rather than raised so the route reads as what it is, and kept here rather than in the
+    route so that **no route asks `page.opens` itself** — the three gates in this module are the
+    only callers, which is what `test_there_is_one_gate_and_not_ten` asserts.
+    """
+    acting = _acting(session, request)
+    if page.opens(session, token, acting=acting) or not page.offers_a_login(token, acting):
+        return None
+    return HTMLResponse(page.just_the_login(acting), headers=page.HEADERS)
+
+
+def _the_operators(session: Session, request: Request, token: str) -> page.Acting:
+    """A view only the operator sees: the session, never a read link. Item 208.
+
+    `404` rather than `403`, like everything else here — a distinct refusal would tell somebody
+    holding a read link which doors exist behind it.
+
+    It returns who that is, because item 212's rail is drawn from it: these two views rendered with
+    the default `Acting` showed a signed-in operator the reader's three nouns, so opening *why it
+    will not work* took away the way to *what it received*.
+    """
+    acting = _may_read(session, request, token)
+    if operator.acting(session, request.cookies.get(operator.COOKIE)) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    return acting
+
+
+def _may_sign_in(session: Session, request: Request, token: str) -> None:
+    """The gate the **login** asks, which is not the one every other route asks. Item 204's defect.
+
+    Found in use on the first attempt: the login was put behind `_may_read`, and at the session door
+    that requires a session — so signing in required already being signed in, and the form answered
+    `{"detail":"Not Found"}`. A door with a handle you can only reach from inside is a door nobody
+    opens.
+
+    Two ways through, and they are the two kinds of person who sign in: somebody holding a read link
+    who wants the buttons, and somebody at the session door who has the password. Everything else is
+    the same `404` an unknown path gets, so an instance with no password configured has nothing to
+    post to — the property DR-0021 spends nothing of.
+    """
+    acting = _acting(session, request)
+    if page.opens(session, token, acting=acting) or page.offers_a_login(token, acting):
+        return
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+
+
 def _acting(session: Session, request: Request) -> page.Acting:
     """What this request may do, from the cookie it brought. Item 166.
 
@@ -470,6 +571,47 @@ def _to_page(token: str, tail: str = "") -> RedirectResponse:
     )
 
 
+@app.get(
+    f"{page.PREFIX}/{{token}}/doctor",
+    tags=["page"],
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def page_doctor(
+    token: str,
+    request: Request,
+    session: Annotated[Session, Depends(_readiness_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> HTMLResponse:
+    """Why an instance that is running will not work. Item 208, DR-0022.
+
+    **The operator's, not a reader's.** DR-0021 gives a link reading and the password administering;
+    this and `config` are the two somebody opens when something is wrong, and they belong on the
+    second side of that line.
+    """
+    acting = _the_operators(session, request, token)
+    return HTMLResponse(
+        page.why_it_will_not_work(session, settings, acting=acting), headers=page.HEADERS
+    )
+
+
+@app.get(
+    f"{page.PREFIX}/{{token}}/config",
+    tags=["page"],
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def page_config(
+    token: str,
+    request: Request,
+    session: Annotated[Session, Depends(_readiness_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> HTMLResponse:
+    """What this process actually received. Item 208."""
+    acting = _the_operators(session, request, token)
+    return HTMLResponse(page.what_it_received(settings, acting=acting), headers=page.HEADERS)
+
+
 @app.post(f"{page.PREFIX}/{{token}}/login", tags=["page"], include_in_schema=False)
 async def page_login(
     token: str,
@@ -487,8 +629,7 @@ async def page_login(
     deployment served over plain HTTP behind a VPN — the cookie would never be sent and the login
     would look broken; hardcoding it off would be wrong the day a TLS proxy is put in front.
     """
-    if not page.opens(session, token):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    _may_sign_in(session, request, token)
 
     supplied = await _field(request, "password")
     issued = operator.sign_in(session, supplied) if supplied else None
@@ -507,6 +648,114 @@ async def page_login(
     return redirect
 
 
+@app.post(f"{page.PREFIX}/{{token}}/projects", tags=["page"], include_in_schema=False)
+async def page_connect_project(
+    token: str,
+    request: Request,
+    session: Annotated[Session, Depends(_readiness_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> HTMLResponse:
+    """Register a project from the page. Item 206, DR-0022.
+
+    **The same function the terminal calls.** `cli.add_project` reads `hullwork.yml` from the
+    default branch with the receiver's own credential — *issue write and content read*, which is
+    exactly what that takes — validates it, and mints the webhook token. A route that registered a
+    project its own way would drift from the command, and items 193, 194, 200 and 203 each cost a
+    day to that.
+
+    The guards are the ones every write route here already has: a session or `404`, a matching CSRF
+    pair or `403`. Nothing new is trusted.
+    """
+    from hullwork import cli
+
+    _may_read(session, request, token)
+    expected = operator.acting(session, request.cookies.get(operator.COOKIE))
+    if expected is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    if not operator.csrf_ok(expected, await _field(request, "csrf")):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
+
+    asked = {name: (await _field(request, name) or "") for name in ("slug", "repo", "forge")}
+    try:
+        made = cli.add_project(
+            session,
+            settings,
+            slug=asked["slug"],
+            forge_kind=asked["forge"] or "forgejo",
+            repo=asked["repo"],
+        )
+    except Exception as exc:  # every refusal already carries its own sentence
+        # **The command's own words, not a generic failure.** A manifest that does not parse, a
+        # repository the token cannot read and a slug already taken are the three things a person
+        # gets wrong, and each has a sentence written for it — showing "something went wrong" here
+        # would send them to the shell to find out what this page already knew.
+        session.rollback()
+        shown = page.projects(
+            session, settings, acting=_acting(session, request), refused=str(exc)
+        )
+        return HTMLResponse(shown, headers=page.HEADERS)
+    shown = page.projects(
+        session, settings, acting=_acting(session, request), just_made=made
+    )
+    return HTMLResponse(shown, headers=page.HEADERS)
+
+
+@app.post(
+    f"{page.PREFIX}/{{token}}/projects/{{slug}}", tags=["page"], include_in_schema=False
+)
+async def page_project_action(
+    token: str,
+    slug: str,
+    request: Request,
+    session: Annotated[Session, Depends(_readiness_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> HTMLResponse:
+    """The rest of a project's life, from its own page. Item 207, DR-0022.
+
+    **One route with an action rather than four routes.** The guard that keeps the write surface
+    readable is a list a person reads, and four names for one page's worth of buttons is how a list
+    stops being read. Each action calls what the terminal calls; none of them is implemented here.
+
+    **No default branch.** An action nobody recognises does nothing and says so — a form field that
+    fell through to whichever branch was last is how a typo becomes a disabled project.
+    """
+    from hullwork import cli
+
+    _may_read(session, request, token)
+    expected = operator.acting(session, request.cookies.get(operator.COOKIE))
+    if expected is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    if not operator.csrf_ok(expected, await _field(request, "csrf")):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
+
+    what = await _field(request, "action")
+    rotated: str | None = None
+    try:
+        if what == "disable":
+            cli.disable_project(session, slug)
+        elif what == "refresh":
+            cli.refresh_manifest(session, settings, slug)
+        elif what == "set-tracker":
+            cli.set_tracker(session, slug, await _field(request, "tracker_project"))
+        elif what == "rotate-secret":
+            rotated = cli.rotate_secret(session, slug)
+        else:
+            raise ValueError(
+                f"{what!r} is not something this page does. Nothing was changed."
+            )
+    except Exception as exc:  # every refusal already carries its own sentence
+        session.rollback()
+        shown = page.projects(
+            session, settings, acting=_acting(session, request), refused=str(exc)
+        )
+        return HTMLResponse(shown, headers=page.HEADERS)
+
+    shown = page.projects(
+        session, settings, acting=_acting(session, request), rotated=(slug, rotated)
+    )
+    return HTMLResponse(shown, headers=page.HEADERS)
+
+
 @app.post(f"{page.PREFIX}/{{token}}/logout", tags=["page"], include_in_schema=False)
 async def page_logout(
     token: str,
@@ -518,8 +767,7 @@ async def page_logout(
     CSRF-protected like the decisions are: a forced logout is a nuisance rather than a breach, but a
     route that skips the check is a route somebody later copies.
     """
-    if not page.opens(session, token):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    _may_read(session, request, token)
     cookie = request.cookies.get(operator.COOKIE)
     if operator.csrf_ok(operator.acting(session, cookie), await _field(request, "csrf")):
         operator.log_out(session, cookie)
@@ -530,6 +778,7 @@ async def page_logout(
 
 def _decide(
     token: str,
+    request: Request,
     item_id: int,
     session: Session,
     csrf: str | None,
@@ -549,8 +798,7 @@ def _decide(
        cookie, so there is nothing left to hide from it;
     4. the state machine, in `decisions`, which is what refuses an item that is not amber.
     """
-    if not page.opens(session, token):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    _may_read(session, request, token)
 
     expected = operator.acting(session, cookie)
     if expected is None:
@@ -586,7 +834,7 @@ async def page_approve(
     A `GET` that approves is a URL that approves — from an image tag, a prefetch, a chat unfurling a
     link somebody pasted. This costs money and opens a pull request, so it cannot be a link.
     """
-    return _decide(token, item_id, session, await _field(request, "csrf"), "approve",
+    return _decide(token, request, item_id, session, await _field(request, "csrf"), "approve",
                    cookie=request.cookies.get(operator.COOKIE))
 
 
@@ -600,5 +848,5 @@ async def page_hand_to_human(
     session: Annotated[Session, Depends(_readiness_session)],
 ) -> RedirectResponse:
     """Take this item away from the agent: a person will do it. `POST` only, same reasoning."""
-    return _decide(token, item_id, session, await _field(request, "csrf"), "human",
+    return _decide(token, request, item_id, session, await _field(request, "csrf"), "human",
                    cookie=request.cookies.get(operator.COOKIE))

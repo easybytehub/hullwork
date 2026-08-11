@@ -133,7 +133,7 @@ def test_the_page_serves_no_markup_language_of_its_own(db: Session, client: Test
     token = generate_token()
     page.issue(db, hash_token(token))
 
-    served = client.get(f"/page/{token}").text
+    served = client.get(f"/page/{token}/instance").text
 
     assert "**" not in served, "the page is HTML; markdown emphasis in it is a literal asterisk"
     assert "<strong>listens</strong>" in served
@@ -198,6 +198,13 @@ _MAY_POST = (
     f"{page.PREFIX}/{{token}}/logout",
     f"{page.PREFIX}/{{token}}/items/{{item_id}}/approve",
     f"{page.PREFIX}/{{token}}/items/{{item_id}}/human",
+    # **Item 206, DR-0022**, and this list failing on the day it was written is the guard working.
+    # Administration moves to the page deliberately: the receiver already holds every credential
+    # registering a project needs — `forge_token` is *issue write and content read* — and it still
+    # holds none that can push, which is the law this does not touch.
+    f"{page.PREFIX}/{{token}}/projects",
+    # Item 207: the rest of a project's life, on one route with an action rather than four names.
+    f"{page.PREFIX}/{{token}}/projects/{{slug}}",
 )
 
 
@@ -206,8 +213,9 @@ def test_only_the_named_routes_under_the_prefix_accept_a_post(client: TestClient
 
     The invariant it was protecting was never "no POST" — it was *no accidental mutation surface*,
     asserted by walking the application's own routes rather than by trusting a decorator to stay a
-    `get` through the next refactor. That still holds, and it is now specific: four routes may take
-    a POST, they are named here, and one more appearing fails this test on the day it is written.
+    `get` through the next refactor. That still holds, and it is now specific: the routes that may
+    take a POST are named here, and one more appearing fails this test on the day it is written —
+    which is exactly what item 206 did, and why the fifth name below carries its reason.
 
     A view acquiring a POST by accident is what this catches, and it is worth catching: the token is
     a bearer credential in a URL, so a mutating route that only checks the token would let anybody
@@ -259,7 +267,7 @@ def test_the_numbers_are_the_ones_status_prints(db: Session, client: TestClient)
     token = generate_token()
     page.issue(db, hash_token(token))
 
-    body = client.get(f"/page/{token}").text
+    body = client.get(f"/page/{token}/instance").text
     printed = io.StringIO()
     cli_main(["status"], out=printed)
 
@@ -508,3 +516,76 @@ def test_the_page_serves_the_mark_the_design_document_specifies() -> None:
     # this assertion learned the hard way. What matters is that nothing is *requested*.
     head = html.split("<body>")[0]
     assert 'href="http' not in head and 'src="http' not in head, "the head must fetch nothing"
+
+
+# --- the door that replaces the token (item 204, DR-0021) ----------------------------------------
+
+
+def test_signing_in_at_the_session_door_is_not_a_404(db: Session, client: TestClient) -> None:
+    """**Found in use, on the first attempt, by the operator** (2026-08-10). Item 204 put the login
+    behind the same gate as everything else — and that gate requires a session at `/page/me/`, so
+    signing in required already being signed in. The form posted, and Hullwork answered
+    `{"detail":"Not Found"}`.
+
+    A door with a handle you can only reach from inside is a door nobody opens.
+    """
+    from hullwork import operator
+
+    operator.set_password(db, "correct horse")
+    db.commit()
+
+    answered = client.post(
+        "/page/me/login", data={"password": "correct horse"}, follow_redirects=False
+    )
+
+    assert answered.status_code != 404
+    assert operator.COOKIE in answered.cookies, "and it signed them in"
+
+
+def test_the_session_door_still_refuses_without_a_password_configured(
+    db: Session, client: TestClient
+) -> None:
+    """The property DR-0021 spends nothing of: an instance that never opted in has no login to post
+    to, and says so with the same `404` an unknown path gets."""
+    answered = client.post("/page/me/login", data={"password": "anything"})
+
+    assert answered.status_code == 404
+
+
+def test_a_wrong_password_at_the_session_door_still_says_nothing(
+    db: Session, client: TestClient
+) -> None:
+    """Item 168's rule survives the new door: a wrong password answers exactly as a right one does,
+    because an error page is an oracle. What differs is the cookie."""
+    from hullwork import operator
+
+    operator.set_password(db, "correct horse")
+    db.commit()
+
+    answered = client.post("/page/me/login", data={"password": "wrong"}, follow_redirects=False)
+
+    assert answered.status_code != 404
+    assert operator.COOKIE not in answered.cookies
+
+
+def test_the_whole_way_in(db: Session, client: TestClient) -> None:
+    """**The flow, end to end, because the parts passing separately is what let this ship broken.**
+
+    Open the door, sign in, read the page. Item 204 had a test for the gate and a test for the login
+    page and none for the sequence, so the one step between them — the form's own POST — was never
+    exercised by anything until a person tried it.
+    """
+    from hullwork import operator
+
+    operator.set_password(db, "correct horse")
+    db.commit()
+
+    shut = client.get("/page/me/")
+    assert shut.status_code == 200
+    assert "<form" in shut.text and 'class="lede' not in shut.text, "the login, not the page"
+
+    client.post("/page/me/login", data={"password": "correct horse"})
+
+    opened = client.get("/page/me/")
+    assert opened.status_code == 200
+    assert 'class="lede' in opened.text, "and now the instance view"

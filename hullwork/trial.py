@@ -365,7 +365,7 @@ def run(
     log.debug(
         "trial starting", extra={"checkout": str(checkout), "sha": resolved.sha, "into": str(into)}
     )
-    return work._attempt(
+    outcome = work._attempt(
         session,
         settings,
         work.Eligible(item=item, project=project),
@@ -376,3 +376,77 @@ def run(
         rehearse_into=into,
         local_checkout=resolved,
     )
+    # **Written here, where the session is** (item 202). The page is a function of the records this
+    # run just made, and they live in a database that exists for the length of this call — so the
+    # only place it can be rendered is before that call returns.
+    #
+    # A failure to write it must not fail the attempt: the artefact is the claim, and the page is
+    # the same claim laid out. Losing the second is a worse page, not a worse verdict.
+    try:
+        write_page(session, settings, item.id, into)
+    except OSError:  # pragma: no cover - a directory that took the artefact and not this
+        log.warning("could not write the evidence page", extra={"into": str(into)})
+    return outcome
+
+
+# --- the page, without an instance (item 202) ----------------------------------------------------
+
+#: What a served page carries and a written one must not: navigation to routes that do not exist as
+#: files, and anything that offers to act on an instance nobody is running. Removed rather than left
+#: to disappoint — a dead link is worse than no link, and a control that looks like it decides
+#: something is worse than a dead link.
+_NAVIGATION = re.compile(r'<a\b(?![^>]*href="(?:#|data:))[^>]*>.*?</a>', re.S)
+_ACTIONS = re.compile(r"<(form|button)\b.*?</\1>", re.S)
+
+
+def page_for(session: Session, settings: Settings, item_id: int) -> str | None:
+    """The item page an instance serves, rendered for a file rather than for a request.
+
+    **The same function, not a second one.** `page.item` is what a reviewer is shown, and a trial
+    that rendered its own would drift from it — which items 193, 194 and 200 each cost a day to.
+    What differs is what is stripped afterwards, and both reasons are the same one: there is no
+    instance behind this page.
+
+    * every link is a route (`items/3`, `items?in=waiting`) — correct served, dead as a file;
+    * every control posts somewhere, and there is nowhere.
+
+    `Acting()` is already the read-only branch (item 166) — what an instance with no operator key
+    renders on every request — and **it is what makes the second true**, not the strip below.
+    Measured by mutation: removing `_ACTIONS` fails nothing, because `READING` emits no control in
+    any state these tests can produce, while rendering with operator rights instead fails seven.
+
+    The strip stays as a second lock on a shut door, and is labelled as defence rather than sold as
+    the guarantee it is not — the same call as item 196's `first_sample`, and for a stronger reason:
+    this page is a **file**, and a file leaves the machine that made it. If `page.item` ever grows a
+    control that survives `READING`, it will do so for a served page where posting works, and this
+    one would carry it to somebody with no instance to post to.
+    """
+    from hullwork import page as page_module
+
+    html = page_module.item(session, settings, item_id, acting=page_module.READING)
+    if html is None:
+        return None
+    html = _ACTIONS.sub("", html)
+    return _NAVIGATION.sub(lambda found: _only_the_words(found.group(0)), html)
+
+
+def _only_the_words(anchor: str) -> str:
+    """An anchor's text, without the anchor. What it said stays; where it went does not exist."""
+    return re.sub(r"<[^>]+>", "", anchor)
+
+
+def write_page(
+    session: Session, settings: Settings, item_id: int, into: Path
+) -> Path | None:
+    """Write that page beside what the trial produced, and return where.
+
+    Beside, so somebody opening the directory finds it without being told. One file: a trial has one
+    item, so an index of one thing would be a page whose only link is the page you are on.
+    """
+    html = page_for(session, settings, item_id)
+    if html is None:
+        return None
+    into.mkdir(parents=True, exist_ok=True)
+    written = into / "evidence.html"
+    written.write_text(html, encoding="utf-8")
+    return written

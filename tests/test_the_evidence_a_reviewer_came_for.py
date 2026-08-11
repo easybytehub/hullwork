@@ -487,16 +487,19 @@ def test_the_relative_links_actually_reach_the_other_views(
 
     door = client.get(f"/page/{token}")
     assert str(door.url).endswith(f"/page/{token}/"), "the slash is what makes the rest relative"
+    # Item 212 made the door the items themselves, so the first hop of this walk is gone and the
+    # rail — which is on every page and therefore has five chances to resolve wrongly — is what the
+    # rest of it follows.
+    assert "<h1>Items</h1>" in door.text
 
-    listed = client.get(urljoin(str(door.url), _href(door.text, "Every item and its evidence")))
-    assert listed.status_code == 200
-    assert "<h1>Items</h1>" in listed.text
+    report = client.get(urljoin(str(door.url), _href(door.text, "This instance")))
+    assert report.status_code == 200, "the noun the arithmetic moved behind"
 
-    detail = client.get(urljoin(str(listed.url), _href(listed.text, f"#{item.id}")))
+    detail = client.get(urljoin(str(door.url), _href(door.text, f"#{item.id}")))
     assert detail.status_code == 200
     assert "Attempt 1" in detail.text
 
-    back = client.get(urljoin(str(detail.url), _href(detail.text, "All items")))
+    back = client.get(urljoin(str(detail.url), _href(detail.text, "Items")))
     assert back.status_code == 200
     assert "<h1>Items</h1>" in back.text
 

@@ -56,6 +56,7 @@ from hullwork import (
 )
 from hullwork import decisions as decide
 from hullwork import dispatch as dispatch_module
+from hullwork import features as features_module
 from hullwork import upstream as upstream_module
 from hullwork.config import ConfigError, Settings, get_settings
 from hullwork.credentials import PushCapability
@@ -1498,6 +1499,20 @@ def rotate_secret(session: Session, slug: str) -> str:
     return token
 
 
+def set_tracker(session: Session, slug: str, tracker_project: str | None) -> Project:
+    """Name this project in the tracker, or unname it. Instance configuration, never the manifest.
+
+    **Extracted by item 207**, the only production code that item moved: this lived inside
+    `_cmd_set_tracker` and had no caller but that command, so the page would have had to reimplement
+    it — the drift items 193, 194, 200 and 203 each cost a day to. Empty means *stop sweeping it*,
+    which is a real answer and not a missing one.
+    """
+    project = _require(session, slug)
+    project.tracker_project = tracker_project or None
+    session.commit()
+    return project
+
+
 def disable_project(session: Session, slug: str) -> Project:
     """Deactivate. Never delete: destroying history to unregister a project is a footgun."""
     project = _require(session, slug)
@@ -2261,6 +2276,18 @@ def _cmd_status(
     # and stopped mentioning the dispatcher at all — while it was stopped. That is the failure item
     # 075's fourth gate exists to prevent, arrived at from the other side: an operator could not
     # tell a quiet healthy instance from one with nothing running.
+    # **The same function the page renders** (item 203), so a reader with a terminal and a reader
+    # with a browser cannot come to disagree about the same instance.
+    standing = features_module.on_this_instance(session, settings)
+    worrying = [one for one in standing if one.state is not features_module.ON]
+    print("\n  Features:", file=out)
+    if worrying:
+        for one in worrying:
+            print(f"    ! {one.name}: {one.state} — {one.detail}", file=out)
+        print(f"    - {len(standing) - len(worrying)} of {len(standing)} on", file=out)
+    else:
+        print(f"    - all {len(standing)} on", file=out)
+
     print("\n  Dispatcher:", file=out)
     for note in dispatcher:
         mark = "!" if note.degraded else "-"
@@ -2611,9 +2638,7 @@ def _cmd_set_tracker(
     args: argparse.Namespace, session: Session, settings: Settings, out: TextIO
 ) -> int:
     """Name this project in the tracker. Instance configuration, never the manifest (DR-0011)."""
-    project = _require(session, args.slug)
-    project.tracker_project = args.tracker_project or None
-    session.commit()
+    project = set_tracker(session, args.slug, args.tracker_project)
     if project.tracker_project is None:
         print(f"'{project.slug}' will no longer be swept.", file=out)
         return 0
@@ -3053,9 +3078,10 @@ def _cmd_try(args: argparse.Namespace, settings: Settings, out: TextIO) -> int:
     print(f"\n{verdict}. What it produced is under {into}.", file=out)
     print(
         "  Nothing was published and no forge was contacted. The artefact there is the same one a "
-        "pull request would carry.\n"
-        "  A real instance shows this and the rest — cost, policies, review debt — on a page: "
-        "`hullwork page-token` (DR-0014).",
+        "pull request would carry, and `evidence.html` beside it is the page a reviewer is shown "
+        "on a real instance — open it, or send it to somebody.\n"
+        "  What that page cannot have here: the numbers an instance keeps across runs — cost over "
+        "time, review debt, whether a fix held. Those need one (DR-0014).",
         file=out,
     )
     # A trial cannot consume an item, so its exit code answers a different question from `work`'s:

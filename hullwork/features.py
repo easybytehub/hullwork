@@ -30,8 +30,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
+from hullwork.config import Settings
 from hullwork.manifest import Manifest
+from hullwork.models import Project
+
+if TYPE_CHECKING:  # pragma: no cover - a type, never a runtime dependency
+    from sqlalchemy.orm import Session
 
 
 @dataclass(frozen=True)
@@ -367,3 +373,152 @@ def lines(answers: Sequence[Answer]) -> list[str]:
             said.append(f"       limit: {limit}")
         said.append("")
     return said
+
+
+# --- the instance side of the same question (item 203) -------------------------------------------
+
+#: The three answers a dashboard may give about a feature **on this instance**, and they are three
+#: because collapsing any pair costs a reader something specific.
+#:
+#: `OFF` is a decision somebody took, and DR-0019's rule is that having is not permitting: rendering
+#: a decision as a fault tells its reader to go and repair a choice they made. `CANNOT` is a fault
+#: and names what is missing. `ON` is the least interesting of the three, which is why the ordering
+#: below puts it last.
+ON = "on"
+OFF = "off"
+CANNOT = "cannot"
+
+
+@dataclass(frozen=True)
+class Standing:
+    """One feature, its state on this instance, and the sentence a reader acts on."""
+
+    name: str
+    state: str
+    detail: str
+
+
+def _filing(session: Session, settings: Settings) -> Standing:
+    """Whether a production error becomes an issue here.
+
+    **Configured, not reachable.** Whether the forge answers costs a network call and this renders
+    on
+    a page request; a dashboard that opened a socket per view would be a load test of somebody's
+    forge. So this says what it established and names what asks the other question — the distinction
+    items 193, 194 and 199 each cost a day to.
+    """
+    name = "filing a production error as an issue"
+    if not settings.forge_url:
+        return Standing(
+            name, CANNOT,
+            "no forge configured. Set HULLWORK_FORGE_URL and HULLWORK_FORGE_TOKEN — a token that "
+            "can read content and write issues, and provably not push.",
+        )
+    active = session.query(Project).filter(Project.active.is_(True)).count()
+    if not active:
+        return Standing(
+            name, OFF,
+            "a forge is configured and no project is registered here yet: "
+            "`hullwork projects add --slug NAME --repo owner/name`.",
+        )
+    return Standing(
+        name, ON,
+        f"a forge is configured and {active} project(s) are registered. Whether it answers is not "
+        f"asked here — `hullwork doctor` asks it.",
+    )
+
+
+def _the_page(session: Session, settings: Settings) -> Standing:
+    """Off until somebody mints a token, which is a decision rather than an omission."""
+    del settings
+    from hullwork import page
+
+    if page.configured(session):
+        return Standing(
+            "the daily page", ON,
+            "a token has been minted. That URL is the credential: anyone holding it can read every "
+            "item and captured output here.",
+        )
+    return Standing(
+        "the daily page", OFF,
+        "off until you run `hullwork page-token`, and everything without the token gets the same "
+        "404 an unknown path gets, so it cannot be found by probing.",
+    )
+
+
+def _notifications(session: Session, settings: Settings) -> Standing:
+    """What each project asked for, against what actually delivers.
+
+    `telegram` and `email` parse in a manifest and are refused at delivery — true, documented in
+    prose, and said nowhere a person would look. This is where they would look.
+    """
+    del settings
+    name = "notifications"
+    delivers = {"none", "console"}
+    asked = {
+        str(((project.manifest or {}).get("notify") or {}).get("channel", "none"))
+        for project in session.query(Project).filter(Project.active.is_(True)).all()
+    }
+    undeliverable = sorted(asked - delivers)
+    if undeliverable:
+        return Standing(
+            name, CANNOT,
+            f"{', '.join(undeliverable)} parses in a manifest and is refused at delivery: a "
+            f"transport nobody has exercised would have its first real run in front of a user. "
+            f"`console` and `none` are what deliver.",
+        )
+    if asked <= {"none"}:
+        return Standing(
+            name, OFF,
+            "every project here asks for `none`, which is the default and a decision. `console` is "
+            "the other one that delivers.",
+        )
+    return Standing(name, ON, f"delivering to {', '.join(sorted(asked - {'none'}))}.")
+
+
+def _recurrence(session: Session, settings: Settings) -> Standing:
+    """Whether a fix that did not hold can be noticed at all. It needs the tracker, not the
+    forge."""
+    del session
+    name = "the recurrence watch"
+    if not settings.tracker_url:
+        return Standing(
+            name, CANNOT,
+            "no tracker configured, so a returning error cannot be seen: a tracker notifies once "
+            "per issue for that issue's whole life, and a recurrence arrives by asking. Set "
+            "HULLWORK_TRACKER_URL and HULLWORK_TRACKER_TOKEN.",
+        )
+    return Standing(
+        name, ON,
+        "a tracker is configured and the sweep asks it. Whether it answers is not asked here.",
+    )
+
+
+#: One answerer per name in `INSTANCE_SHAPED`, so the list is what drives the dashboard rather than
+#: something kept beside it. A fifth name added there tomorrow fails this module loudly rather than
+#: going unanswered the way all four did until item 203.
+_ANSWERS = {
+    "filing a production error as an issue": _filing,
+    "the daily page": _the_page,
+    "notifications": _notifications,
+    "the recurrence watch": _recurrence,
+}
+
+
+def on_this_instance(session: Session, settings: Settings) -> list[Standing]:
+    """What this instance has switched on, off, and cannot do — worst first.
+
+    **The other half of `examine`.** That one answers for a checkout and hands `INSTANCE_SHAPED`
+    back as somebody else's question, with a comment saying `doctor` owns it. `doctor` answers
+    resources, and a resource is not a feature: four capabilities were named as nobody's question
+    until this took them.
+
+    Ordered with `ON` last on purpose. A reader opens this looking for what is not working, and a
+    wall of green with one red line in the middle is a wall of green.
+    """
+    missing = [name for name in INSTANCE_SHAPED if name not in _ANSWERS]
+    if missing:  # pragma: no cover - the structural test below is what keeps this true
+        msg = f"no answer on this instance for: {missing}"
+        raise NotImplementedError(msg)
+    standing = [_ANSWERS[name](session, settings) for name in INSTANCE_SHAPED]
+    return sorted(standing, key=lambda one: one.state is ON)

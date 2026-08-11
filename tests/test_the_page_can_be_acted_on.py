@@ -409,7 +409,7 @@ def test_the_machine_strip_links_what_it_counts_and_a_zero_is_not_a_link(
     found.state = ItemState.READY
     db.commit()
 
-    front = client.get(f"/page/{TOKEN}/").text
+    front = client.get(f"/page/{TOKEN}/instance").text
 
     assert 'href="items?in=queued"' in front
     assert 'href="items?in=working"' not in front
@@ -544,7 +544,7 @@ def test_nothing_disagreeing_is_one_line_and_still_says_it_ran(
     monkeypatch.setenv("HULLWORK_MODEL_NAME", "anthropic/claude-sonnet-5")
     get_settings.cache_clear()
 
-    front = client.get(f"/page/{TOKEN}/").text
+    front = client.get(f"/page/{TOKEN}/instance").text
 
     assert "Nothing disagrees: the three checks ran and found nothing." in front
     assert "<h2>What does not add up</h2>" not in front
@@ -553,11 +553,18 @@ def test_nothing_disagreeing_is_one_line_and_still_says_it_ran(
 def test_the_evaluator_material_is_folded_away(db: Session, client: TestClient) -> None:
     """the interface document promised the daily reader never pays for the
     evaluator's questions, and the configuration table was starting in the second half of the first
-    screen anyway."""
-    front = client.get(f"/page/{TOKEN}/").text
+    screen anyway.
 
-    assert "<details><summary>How this instance is configured</summary>" in front
-    assert front.index("class=\"lede") < front.index("How this instance is configured")
+    **The summary was renamed in item 211 and this test asserted the words.** Those seven rows are
+    state — version, forge, sweep, backlog — and calling them *configured* was harmless until
+    `/config` existed and genuinely was the configuration. The property here was never the wording:
+    it is that the block is folded, and that it comes after the lede.
+    """
+    front = client.get(f"/page/{TOKEN}/instance").text
+
+    assert "How it is right now" in front
+    assert "<details><summary>How it is right now</summary>" in front, "folded, not open"
+    assert front.index("class=\"lede") < front.index("How it is right now")
 
 
 def test_no_microsecond_timestamp_is_rendered_for_a_human(
