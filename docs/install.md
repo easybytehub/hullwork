@@ -93,10 +93,10 @@ is the half that answers webhooks. Nothing here can push to anything.
 curl -O https://raw.githubusercontent.com/easybytehub/hullwork/main/docker-compose.yml
 docker compose up -d
 curl http://127.0.0.1:8000/health
-# {"status":"ok","version":"0.1.0a8"}
+# {"status":"ok","version":"0.1.0a9"}
 ```
 
-The image is `ghcr.io/easybytehub/hullwork:0.1.0a8`, built for amd64 and arm64, pinned in that compose
+The image is `ghcr.io/easybytehub/hullwork:0.1.0a9`, built for amd64 and arm64, pinned in that compose
 file rather than floating on `latest`. From a clone, `docker compose up -d --build` builds your own
 instead — which is what you want if you are testing a change.
 
@@ -121,15 +121,6 @@ The database lives on a named volume, so `docker compose down` and `up` keeps ev
 Losing them would make every already-known error look new tomorrow morning.
 
 ### Asking it how it is
-
-> **Built and unreleased**, as of 2026-08-10. Everything in this section is in no image you can pull:
-> `docs/published-surface.json` records `0.1.0a8`, and these routes are items 203 to 208. Until a
-> release carries them, the CLI below is the whole of it — and this note stays, because the rule is
-> that documentation describes the released artefact rather than this checkout (`CONTRIBUTING.md`).
->
-> Written down rather than deleted because the guard that catches this **cannot see it**: it compares
-> documented *commands* against the published image and knows nothing about URLs, so a route
-> documented before it exists passes every test. Recorded as work item 209.
 
 **From the page, which is the point** (DR-0022).
 Set a password once — `docker compose exec api hullwork password`, read from a prompt so it is not in
@@ -165,8 +156,8 @@ you wrote in a file.
 ### A page a teammate can read
 
 Two doors, and they are for two people
-(DR-0021). **The first is unreleased**, per the note
-above; the second has worked since `0.1.0a5`.
+(DR-0021). The first arrived in `0.1.0a9`; the second
+has worked since `0.1.0a5`.
 
 **Yours is `/page/me/`**, behind the password. Nothing to lose, nothing to copy, and it is the only
 one that administers anything.
