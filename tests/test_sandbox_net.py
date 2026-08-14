@@ -276,7 +276,8 @@ def test_everything_is_torn_down_even_when_construction_fails(
         pass  # pragma: no cover - the cable never comes up
 
     lines = _log(tmp_path)
-    assert any(line.startswith("rm -f hullwork-cable-t8") for line in lines)
+    # `-v` since item 244: what the gateway's image declared as a VOLUME goes with the container.
+    assert any(line.startswith("rm -f -v hullwork-cable-t8") for line in lines)
     assert any(line.startswith("network rm hullwork-attempt-t8") for line in lines)
 
 
@@ -481,7 +482,9 @@ def test_teardown_completes_when_the_journal_cannot_be_fetched(
 
     lines = _log(tmp_path)
     # Teardown ran to the end: all three removals happened despite the journal being unreadable.
-    assert any(line.startswith("rm -f hullwork-cable-t15") for line in lines), (
+    # `-v` since item 244: the gateway's own anonymous volumes go with it, and a removal without
+    # it left 69 of them on the operator's host in a day.
+    assert any(line.startswith("rm -f -v hullwork-cable-t15") for line in lines), (
         f"the container was not removed: {lines}"
     )
     assert any(line == "network rm hullwork-attempt-t15" for line in lines), (

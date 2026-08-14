@@ -158,13 +158,20 @@ def test_the_list_says_which_attempt_reached_a_pull_request(db: Session, project
 
     rendered = page.items(db)
 
-    row = re.search(r"<tr>(?:(?!</tr>).)*fixed one.*?</tr>", rendered, re.DOTALL)
+    # Rows carry a class since item 247; the reach of each one is still its last cell.
+    row = re.search(r'<tr class="subject">(?:(?!</tr>).)*fixed one.*?</tr>', rendered, re.DOTALL)
     assert row is not None and "#6" in row.group(0)
-    filed_row = re.search(r"<tr>(?:(?!</tr>).)*filed only.*?</tr>", rendered, re.DOTALL)
+    filed_row = re.search(
+        r'<tr class="subject">(?:(?!</tr>).)*filed only.*?</tr>', rendered, re.DOTALL
+    )
     assert filed_row is not None and "#10" in filed_row.group(0)
     assert filed.forge_issue_ref == "#10"
-    never = re.search(r"<tr>(?:(?!</tr>).)*never filed.*?</tr>", rendered, re.DOTALL)
-    assert never is not None and "—" in never.group(0)
+    never = re.search(
+        r'<tr class="subject">(?:(?!</tr>).)*never filed.*?</tr>', rendered, re.DOTALL
+    )
+    # **Nothing rather than a dash**: the column where a reference goes is empty, which is what the
+    # other views do with an action nobody can take.
+    assert never is not None and '<td class="do"></td>' in never.group(0)
 
 
 def test_the_bound_is_on_the_page_and_not_only_in_the_query(
@@ -180,7 +187,8 @@ def test_the_bound_is_on_the_page_and_not_only_in_the_query(
     rendered = page.items(db)
 
     assert "2 most recently seen of 5 item(s)" in rendered
-    assert rendered.count("<tr>") == 3, "two rows and the header"
+    # Two rows and no header: the grouping's heading is what names them now (DR-0028).
+    assert rendered.count('<tr class="subject">') == 2
 
 
 def test_an_instance_with_no_items_says_so(db: Session) -> None:
@@ -487,26 +495,44 @@ def test_the_relative_links_actually_reach_the_other_views(
 
     door = client.get(f"/page/{token}")
     assert str(door.url).endswith(f"/page/{token}/"), "the slash is what makes the rest relative"
-    # Item 212 made the door the items themselves, so the first hop of this walk is gone and the
-    # rail — which is on every page and therefore has five chances to resolve wrongly — is what the
-    # rest of it follows.
-    assert "<h1>Items</h1>" in door.text
+    # Item 212 made the door the work rather than the arithmetic; item 237 made it the projects and
+    # what is waiting in each. The rail is on every page and therefore has as many chances to
+    # resolve wrongly as it has entries, which is what the rest of this walk follows.
+    assert "<h1>Hullwork</h1>" in door.text or "Projects" in door.text
 
     report = client.get(urljoin(str(door.url), _href(door.text, "This instance")))
     assert report.status_code == 200, "the noun the arithmetic moved behind"
 
-    detail = client.get(urljoin(str(door.url), _href(door.text, f"#{item.id}")))
-    assert detail.status_code == 200
+    # **Three depths of relative link, which is where item 227 broke** — one level for `items/<id>`,
+    # two for `projects/<slug>`, three for `projects/<slug>/<feature>`. Each is written once, in
+    # `_document`, and each is followed here rather than asserted about.
+    walked = client.get(urljoin(str(door.url), _href(door.text, project.slug)))
+    assert walked.status_code == 200, "a project named on the door does not resolve"
+
+    seen: dict[str, str] = {}
+    for feature in ("Errors", "Fixes", "Dependencies", "Deliveries"):
+        inside = client.get(urljoin(str(walked.url), _href(walked.text, feature)))
+        assert inside.status_code == 200, f"{feature} does not resolve from the project"
+        assert f"{feature}</span></h1>" in inside.text
+        seen[feature] = inside.text
+
+    from_errors = _href(seen["Errors"], str(item.id))
+    detail = client.get(urljoin(f"/page/{token}/projects/{project.slug}/errors", from_errors))
+    assert detail.status_code == 200, "an item does not resolve from its project's errors"
     assert "Attempt 1" in detail.text
 
-    back = client.get(urljoin(str(detail.url), _href(detail.text, "Items")))
+    back = client.get(urljoin(str(detail.url), _href(detail.text, "What needs you")))
     assert back.status_code == 200
-    assert "<h1>Items</h1>" in back.text
+    assert "Projects" in back.text
 
 
 def _href(html_text: str, label: str) -> str:
     """The `href` of the link whose text is `label`. A reader clicks these; so does this test."""
-    found = re.search(rf'<a href="([^"]+)"[^>]*>{re.escape(label)}</a>', html_text)
+    # The rail carries a count inside the link since item 235, so a label is followed by the end of
+    # the anchor **or** by that badge. Anchored on the label rather than on the whole anchor.
+    found = re.search(rf'<a href="([^"]+)"[^>]*>{re.escape(label)}(?:<span|</a>)', html_text)
+    if found is None:  # a name rendered inside its own element, as the door renders a project
+        found = re.search(rf'<a href="([^"]+)"[^>]*>\s*{re.escape(label)}\s*<', html_text)
     assert found is not None, f"no link labelled {label!r}"
     return found.group(1)
 

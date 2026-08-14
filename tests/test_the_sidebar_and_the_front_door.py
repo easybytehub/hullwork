@@ -224,7 +224,7 @@ def test_the_first_screen_is_the_work_and_not_the_arithmetic(session: Session) -
     instance's own numbers are a noun in the sidebar, one click away, with nothing dropped."""
     landing = _front_door(session)
 
-    assert "Items" in landing or "Nothing has arrived" in landing
+    assert "Errors" in landing or "Nothing has arrived" in landing
     assert 'href="instance"' in landing
 
 

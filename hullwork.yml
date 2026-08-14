@@ -27,6 +27,14 @@ autofix:
   # does not exist yet, and it refuses without a code credential the live instance does not hold.
   agent: claude-code
   sandbox: docker
+  # Permission, not capability (DR-0019). Turned on 2026-08-13 by the operator, once item 245 made
+  # the request a person's act: a verified-green upgrade carries the files its suite passed with and
+  # the commit it ran at, and pressing the control on the page opens a draft pull request holding
+  # exactly that. Nothing here opens on a clock — the instance verifies on its own schedule and
+  # never opens by itself. What this line says to a contributor reading it is: on this repository,
+  # a human may ask for that, and every one of them still arrives as a draft nobody but a human
+  # merges.
+  open_upgrades: true
   lanes:
     green:
       - typeerror

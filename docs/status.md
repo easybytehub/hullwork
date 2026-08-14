@@ -58,6 +58,22 @@ read is a policy nobody has agreed to.
 its suite runs against a blank one per phase. That path has been exercised by **one** project, and
 `alembic upgrade head` in its test command is what made it necessary.
 
+**A verified upgrade can be opened from the page, and only by a person.** As of item 245: an upgrade
+this instance verified green — applied in a clone, your suite run before and after — carries the files
+it passed with and the commit it ran at, so pressing the control on its row opens a draft pull request
+holding exactly that, rooted at exactly that commit. Nothing is opened on a clock: this instance
+verifies on its own schedule and **never** opens by itself (DR-0026).
+
+Two things that follow, and both are refusals you will meet:
+
+- **The half that renders the page cannot push.** It writes down that you asked; the other process,
+  the one with no socket and the code credential, opens it on its next turn. So the pull request
+  appears seconds later and the page says which state the row is in rather than pretending the click
+  was the act.
+- **Your manifest outranks the button.** `autofix.open_upgrades` is `false` by default, and while it
+  is, the page tells you how many passed and that none can be opened. Having the credential is not the
+  same as having agreed, and the report is what there is to act on either way.
+
 ## What does not exist yet
 
 - **Sentry's webhook route is enabled since `0.1.0a8`, and its signature is not verified.** It is

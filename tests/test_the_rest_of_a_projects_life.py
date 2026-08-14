@@ -13,6 +13,7 @@ Every test here was verified by reintroducing the defect it covers.
 
 from __future__ import annotations
 
+import html as h
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -81,8 +82,14 @@ def _connected(db: Session, client: TestClient, monkeypatch: pytest.MonkeyPatch)
 
 
 def _act(client: TestClient, what: str, csrf: str, **extra: str) -> object:
+    """**Posted to `settings`, which is the view every one of these buttons is on** (item 250).
+
+    It posted to `projects/mine` and was answered with a document written for somewhere else — the
+    list of projects on a refusal and on `rotate-secret` — so every link on the page that came back
+    resolved one level too deep.
+    """
     return client.post(
-        "/page/me/projects/mine", data={"action": what, "csrf": csrf, **extra}
+        "/page/me/projects/mine/settings", data={"action": what, "csrf": csrf, **extra}
     )
 
 
@@ -183,5 +190,80 @@ def test_there_is_exactly_one_new_route() -> None:
         and getattr(route, "path", "").startswith(page.PREFIX)
     }
 
-    assert f"{page.PREFIX}/{{token}}/projects/{{slug}}" in posts
-    assert len(posts) == 6, sorted(posts)
+    # **Item 250 moved this one segment deeper and added none.** The five views a project has do
+    # not need five routes: `feature` names the document that comes back, which a `POST` has to
+    # answer with because the answer is served at the URL the form posted to.
+    assert f"{page.PREFIX}/{{token}}/projects/{{slug}}/{{feature}}" in posts
+    # Eight since item 219 added the instance's upkeep and the item's housekeeping, each on one
+    # route with an action rather than three names and two. The number is asserted rather than the
+    # membership because the point is that it stays small enough to read.
+    assert len(posts) == 8, sorted(posts)
+
+
+def test_every_action_says_what_it_did(
+    db: Session, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**Found by pressing them** (item 223). `refresh`, `disable` and `set-tracker` completed and
+    rendered nothing — a control that appears to do nothing is a control somebody presses again,
+    which on `refresh` is a second forge request and on `disable` is a minute of wondering whether
+    the first one worked.
+
+    The two that already spoke were a rotated secret and a refusal: the ones with something obvious
+    to show. Silence on success is the easy half to forget.
+    """
+    csrf = _connected(db, client, monkeypatch)
+
+    # **Read out of the outcome block, not out of the page.** The first version looked for the
+    # tracker's name anywhere, and the view renders it in the form field it just set — so deleting
+    # the answer entirely still passed. One question, two answers, again.
+    def _answered(response: object) -> str:
+        found = re.search(r'class="[^"]*outcome[^"]*">(.*?)</', response.text, re.S)  # type: ignore[attr-defined]
+        return found.group(1) if found else ""
+
+    assert "in the tracker" in _answered(
+        _act(client, "set-tracker", csrf, tracker_project="mine-in-tracker")
+    )
+    assert "manifest again" in _answered(_act(client, "refresh", csrf))
+
+    stopped = _answered(_act(client, "disable", csrf))
+    assert "no longer watched" in stopped
+    assert "Nothing was deleted" in stopped
+
+
+def test_stopping_a_project_says_what_it_means_before_it_does_it(
+    db: Session, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**Item 226, found by doing it to a real instance while auditing it.** `Stop watching it` sat
+    in the same row as `Re-read its manifest` — one idempotent, one that silently stops the product
+    working for that project — and there was no way back from either the page or the terminal.
+
+    Two submissions now, like `prune`: the first says what stopping means and changes nothing.
+    """
+    csrf = _connected(db, client, monkeypatch)
+
+    warned = _act(client, "disable-preview", csrf)
+
+    assert "no issue is filed" in warned.text  # type: ignore[attr-defined]
+    assert "watching it again is one button" in warned.text  # type: ignore[attr-defined]
+    assert db.query(Project).filter(Project.slug == "mine").one().active is True
+
+
+def test_a_stopped_project_can_be_watched_again(
+    db: Session, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**Reversible in principle and irreversible in practice is the worst of both.** `disable`
+    deletes nothing — that is its whole design — and until this the only undo was an `UPDATE`
+    against a SQLite file inside a Docker volume."""
+    csrf = _connected(db, client, monkeypatch)
+    _act(client, "disable", csrf)
+
+    assert db.query(Project).filter(Project.slug == "mine").one().active is False
+
+    back = _act(client, "enable", csrf)
+
+    # **Escaped, because the page escapes.** `'mine'` is `&#x27;mine&#x27;` in the served bytes,
+    # and a test comparing against the unescaped form is testing a string nobody is sent.
+    assert "Nothing was re-validated" in back.text  # type: ignore[attr-defined]
+    assert h.escape("Watching 'mine' again", quote=True) in back.text  # type: ignore[attr-defined]
+    db.expire_all()
+    assert db.query(Project).filter(Project.slug == "mine").one().active is True

@@ -562,9 +562,12 @@ def test_the_evaluator_material_is_folded_away(db: Session, client: TestClient) 
     """
     front = client.get(f"/page/{TOKEN}/instance").text
 
-    assert "How it is right now" in front
-    assert "<details><summary>How it is right now</summary>" in front, "folded, not open"
-    assert front.index("class=\"lede") < front.index("How it is right now")
+    # **And unfolded again in item 235.** The seven rows are what this process *is* — version,
+    # forge, sweep, backlog — and DR-0027 draws the line where item 167 drew it: a fold holds an
+    # evaluator's evidence, not a feature. The property that survives is the second one, which was
+    # always the real one: it comes after the lede, so the daily reader meets the work first.
+    assert "How it is now" in front
+    assert front.index("class=\"lede") < front.index("How it is now")
 
 
 def test_no_microsecond_timestamp_is_rendered_for_a_human(

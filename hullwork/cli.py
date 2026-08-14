@@ -14,13 +14,12 @@ import getpass
 import json
 import logging
 import os
-import shutil
 import signal
 import subprocess
 import sys
 import threading
 from collections.abc import Callable, Sequence
-from contextlib import ExitStack, suppress
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -47,7 +46,6 @@ from hullwork import (
     readiness,
     recurrence,
     refit,
-    resolve,
     spend,
     territory,
     triage,
@@ -55,7 +53,6 @@ from hullwork import (
     work,
 )
 from hullwork import decisions as decide
-from hullwork import dispatch as dispatch_module
 from hullwork import features as features_module
 from hullwork import upstream as upstream_module
 from hullwork.config import ConfigError, Settings, get_settings
@@ -545,7 +542,7 @@ def _verify_upgrades(
                 )
             )
             continue
-        report = _verify_one(checkout, paths, read, manifest, dep, versions, out)
+        report = upgrades.verify_one(checkout, paths, read, manifest, dep, versions, out)
         if report is not None:
             reports.append(report)
 
@@ -892,146 +889,6 @@ def _print_the_queue(reports: Sequence[bump.Report], out: TextIO) -> None:
         cost = f", {broke} test(s) to fix" if broke and settled is None else ""
         print(f"  [{needs.value}] {report.package} {report.was}{where}{cost}", file=out)
     print("", file=out)
-
-
-def _verify_one(
-    checkout: Path,
-    paths: Sequence[str],
-    read: Callable[[str], str | None],
-    manifest: Manifest,
-    dep: dependencies.Dependency,
-    versions: list[str],
-    out: TextIO,
-) -> bump.Report | None:
-    """One package, every candidate, each in its own sandbox."""
-    from hullwork import trial
-    from hullwork.sandbox import image as image_module
-    from hullwork.sandbox.run import Sandbox
-
-    runtime = manifest.runtime
-    assert runtime is not None  # noqa: S101 - refused above, and mypy cannot see that
-    tests = manifest.tests or ""
-    source = dep.source
-
-    # Which candidate `verify` is on, so a resolver-backed mover knows what to ask for.
-    _pending: dict[str, str] = {"version": ""}
-
-    with ExitStack() as stack:
-        worktree = dispatch_module.prepare_worktree(checkout)
-        stack.callback(shutil.rmtree, worktree, ignore_errors=True)
-
-        def files_now() -> dict[str, bytes]:
-            """The declared dependency files as they are in the worktree right now.
-
-            Read per build rather than once: the rewrite happens between the two, and the second
-            build has to see it — `image.dependency_digest` then makes the tag differ by itself,
-            which is what turns the second build into a real rebuild.
-            """
-            found: dict[str, bytes] = {}
-            for path in runtime.dependencies or [source]:
-                whole = worktree / path
-                if whole.exists():
-                    found[path] = whole.read_bytes()
-            return found
-
-        built: dict[str, str] = {}
-        # **The commit the source is at, when the source goes into the build at all** (item 182).
-        # Read once: it is what `image_tag` hashes to decide whether an image can be reused, and the
-        # source does not move between candidates — only the dependency files do, and those are
-        # hashed separately by `dependency_digest`.
-        source_ref = trial.head_sha(checkout) if runtime.install_needs_source else None
-
-        def build_now() -> str | None:
-            try:
-                image = image_module.build(
-                    runtime, files_now(), None,
-                    # **Item 113's fix, which this path never inherited** (found by item 182, on
-                    # the first third-party tree it was pointed at). The build context holds the
-                    # declared dependency files and never the source, and three ordinary installers
-                    # read the source anyway: a `requirements.txt` beginning `-e .`, a `Gemfile`
-                    # that says `gemspec`, and `mvn test`. Measured on `encode/httpx`, whose first
-                    # requirement is `-e .[brotli,cli,http2,socks,zstd]`:
-                    #
-                    #   ERROR: file:///work does not appear to be a Python project:
-                    #          neither 'setup.py' nor 'pyproject.toml' found.
-                    #
-                    # Reported as *your own environment does not build*, which was true of what we
-                    # built and false of the project. Ruby, Java and PHP are on the roadmap as
-                    # stacks whose attempts work; every one of them reaches this the same way.
-                    source=worktree if runtime.install_needs_source else None,
-                    source_ref=source_ref,
-                )
-            except image_module.ImageBuildError as failed:
-                return str(failed)
-            built["tag"] = image.tag
-            return None
-
-        # The baseline image, before anything is rewritten. A failure here is the project's
-        # environment, not the upgrade's, so it is said as that.
-        problem = build_now()
-        if problem is not None:
-            print(f"  {dep.name}: your own environment does not build — {problem}\n", file=out)
-            return None
-
-        made = {"n": 0}
-
-        def make_box(_version: str) -> bump.Box:
-            """A box on **whatever image `built` holds right now**.
-
-            Called once per run rather than once per candidate, because the second run has to
-            happen on the rebuilt image — reusing the first box measures the upgraded project's
-            suite against the environment it replaced, and reports `clean` for a version that was
-            never installed. Found by a real Docker run; see item 174.
-            """
-            made["n"] += 1
-            # Built from the worktree **as it is now**, which is what makes each run happen in the
-            # environment its own tree describes. Cheap when nothing changed: the digest is the
-            # content, so `build` reuses the existing image rather than making another.
-            build_now()
-            box = Sandbox(image=built["tag"], worktree=worktree)
-            stack.callback(box.cleanup)
-            box.ensure_volume(
-                f"hullwork-deps-{os.getpid()}-{made['n']}",
-                # **Item 114's fix, which this path never inherited either** (item 182). Anything
-                # the build installed under `/work` is erased by the worktree volume unless the
-                # image goes down first — which is what `vendor/` is for PHP, and the reason that
-                # item exists. Off unless the project asks, so every other project takes the path
-                # it took yesterday.
-                seed_from_image=runtime.install_needs_source,
-            )
-            return box  # type: ignore[return-value]
-
-        # How this file is moved, and everything moving it can touch (items 175 and 176). For a
-        # list the line is the pin; for a resolved graph only the ecosystem's own tool may move it,
-        # and `touches` is what stops one candidate leaving a widened range behind for the next.
-        resolver = resolve.resolver_for(source)
-        mover = None
-        guarded: tuple[str, ...] = (source,)
-        if resolver is not None:
-            guarded = resolve.touches(resolver)
-            here = [p for p in paths if p.rsplit("/", 1)[-1] in set(resolver.needs)]
-
-            def mover(worktree: Path, _r: resolve.Resolver = resolver) -> str | None:
-                outcome = resolve.upgrade(
-                    resolver=_r, worktree=worktree, package=dep.name, version=_pending["version"],
-                    present=here, run=resolve.in_a_container,
-                )
-                return None if outcome.ok else f"{outcome.outcome.value}: {outcome.detail}"
-
-        report = bump.verify(
-            tests=tests, source=source, package=dep.name,
-            was=dep.version, versions=versions,
-            make_box=make_box, rebuild=lambda _text: build_now(),
-            mover=mover, touches=guarded, pending=_pending,
-        )
-
-    for answer in report.answers:
-        print(f"  {answer.says}", file=out)
-        if answer.detail:
-            for line in answer.detail.splitlines()[:8]:
-                print(f"      {line}", file=out)
-    print("", file=out)
-    return report
 
 
 def _cmd_features(args: argparse.Namespace, settings: Settings, out: TextIO) -> int:
@@ -1448,7 +1305,7 @@ def refresh_manifest(
     return manifest
 
 
-def prune(session: Session, older_than_days: int) -> int:
+def prune(session: Session, older_than_days: int, *, dry_run: bool = False) -> int:
     """Forget the raw bodies of deliveries older than N days. Returns how many were cleared.
 
     The payload is kept so a delivery accepted before a restart can still be processed after one —
@@ -1471,6 +1328,16 @@ def prune(session: Session, older_than_days: int) -> int:
     looking untried when it is spent.
     """
     cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+    # **Counting is the same query as clearing, minus the write** (item 219). The page shows what it
+    # would drop before it drops it, and a preview computed by a second query is a preview that can
+    # disagree with the thing it previews — which on the only destructive control here would be
+    # worse than having no preview at all.
+    if dry_run:
+        return int(
+            session.query(Delivery)
+            .filter(Delivery.received_at < cutoff, Delivery.payload_json != "")
+            .count()
+        )
     cleared = (
         session.query(Delivery)
         .filter(Delivery.received_at < cutoff, Delivery.payload_json != "")
@@ -1519,6 +1386,79 @@ def disable_project(session: Session, slug: str) -> Project:
     project.active = False
     session.commit()
     return project
+
+
+def enable_project(session: Session, slug: str) -> Project:
+    """Watch it again. The counterpart `disable` did not have. Item 226.
+
+    **Reversible in principle and irreversible in practice is the worst of both.** `disable` deletes
+    nothing — that is its whole design — and until this existed the only way to undo it was an
+    `UPDATE` against a SQLite file inside a Docker volume. Found by doing it by accident to a real
+    instance, from a button sitting beside `refresh`.
+
+    Nothing is re-validated here: the manifest, the secret and every item are exactly where they
+    were, which is what made stopping safe in the first place.
+    """
+    project = _require(session, slug)
+    project.active = True
+    session.commit()
+    return project
+
+
+def ask_to_open(session: Session, slug: str, verdict_id: int) -> str:
+    """Record that a person wants this upgrade opened. Item 245, DR-0026.
+
+    **This is the button, and pressing it opens nothing.** The receiver renders the page and holds
+    no credential that can push — that refusal is the property the whole two-process design rests
+    on (DR-0009) — so the act of a person is written down here and the dispatcher carries it out on
+    its next turn. What comes back is the sentence the page shows, and it says the pull request does
+    not exist yet, because a control that implies otherwise is one somebody presses twice.
+
+    Every refusal below is a `ValueError` the page renders as-is: the caller is a form, and a form
+    posting an id nobody offered is the case this exists for.
+    """
+    from hullwork.models import UpgradeVerdict
+
+    project = _require(session, slug)
+    verdict = session.get(UpgradeVerdict, verdict_id)
+    if verdict is None or verdict.project_id != project.id:
+        msg = f"there is no verdict {verdict_id} for {slug!r}. Nothing was asked for."
+        raise ValueError(msg)
+    if verdict.opened_where:
+        msg = (
+            f"{verdict.package} {verdict.was} → {verdict.to} is already open at "
+            f"{verdict.opened_where}."
+        )
+        raise ValueError(msg)
+    if verdict.outcome != "clean":
+        # **Only a verdict that passed may be asked for**, and this is the guard rather than the
+        # template: a page that offers the control correctly today is not a reason for the write
+        # path to accept anything posted at it.
+        msg = (
+            f"{verdict.package} {verdict.was} → {verdict.to} is {verdict.outcome}, so there is "
+            f"nothing to open. Only an upgrade this project's own suite passed can be."
+        )
+        raise ValueError(msg)
+    if not verdict.artefact:
+        msg = (
+            f"the files {verdict.package} {verdict.to} passed with are not kept any more, so what "
+            f"would be opened is not what was verified. It is measured again on the next report."
+        )
+        raise ValueError(msg)
+    if verdict.asked_to_open_at is not None:
+        return (
+            f"{verdict.package} {verdict.was} → {verdict.to} was already asked for. The dispatcher "
+            f"opens it on its next turn; nothing is lost by waiting."
+        )
+    verdict.asked_to_open_at = datetime.now(UTC)
+    verdict.open_note = None
+    session.commit()
+    return (
+        f"Asked for {verdict.package} {verdict.was} → {verdict.to}. **No pull request exists "
+        f"yet**: this half of the instance cannot push, so the dispatcher opens it on its next "
+        f"turn — rooted at the commit the suite ran against, with the files it passed with. "
+        f"Reload to see where it went."
+    )
 
 
 def _require(session: Session, slug: str) -> Project:
@@ -1662,7 +1602,23 @@ def _cmd_disable(
     args: argparse.Namespace, session: Session, settings: Settings, out: TextIO
 ) -> int:
     project = disable_project(session, args.slug)
-    print(f"Disabled '{project.slug}'. Its events and items are kept.", file=out)
+    print(
+        f"Disabled '{project.slug}'. Its events and items are kept, and "
+        f"`hullwork projects enable {project.slug}` watches it again.",
+        file=out,
+    )
+    return 0
+
+
+def _cmd_enable(
+    args: argparse.Namespace, session: Session, settings: Settings, out: TextIO
+) -> int:
+    project = enable_project(session, args.slug)
+    print(
+        f"Watching '{project.slug}' again. Nothing was re-validated: its manifest, its secret and "
+        f"every item are where they were.",
+        file=out,
+    )
     return 0
 
 
@@ -3178,6 +3134,87 @@ LOOP_FLOOR_SECONDS = 5
 LOOP_CEILING_SECONDS = 300
 
 
+def _verify_one_upgrade(
+    session: Session, settings: Settings, *, say: Callable[[str | None], None] = lambda _: None
+) -> str | None:
+    """One published fix, applied and measured, writing nothing anywhere. DR-0026.
+
+    **The read credential.** A verification writes to no repository, so it clones with the token
+    that cannot push and the property holds by construction — the same reasoning that keeps `work`
+    from ever holding one it does not need.
+    """
+    from hullwork import upgrades, work
+
+    def clone(where: Settings, project: Project, into: Path) -> Path:
+        token = where.forge_token.get_secret_value() if where.forge_token else None
+        if token is None:
+            msg = "HULLWORK_FORGE_TOKEN is not set, so no repository can be read"
+            raise work.WiringError(msg)
+        return work.checkout(work.clone_url(where, project), token, into=into).path
+
+    try:
+        return upgrades.verify_next(session, settings, clone=clone, say=say)
+    except (work.WiringError, SandboxError, ImageBuildError) as exc:
+        log.warning("an upgrade could not be verified", extra={"error": str(exc)})
+        return None
+
+
+def _open_one_requested(session: Session, settings: Settings) -> str | None:
+    """One upgrade somebody asked for from the page, opened. Item 245.
+
+    **The code credential, and it is built here rather than passed in** for the same reason
+    `_verify_one_upgrade` builds the read one: the credential belongs to the process, and `upgrades`
+    stays testable against a double. `make_code_forge` answers `None` until the code token is set,
+    which is the ordinary state of the receiver and a misconfiguration in the dispatcher —
+    `open_requested` tells those apart and leaves the request pending either way.
+
+    **Closed even when nothing was opened.** A forge client left open per turn is a socket per
+    minute, and this runs in a resident process.
+    """
+    from hullwork import upgrades
+
+    code_forge = make_code_forge(settings)
+    try:
+        return upgrades.open_requested(
+            session, code_forge, secrets=_redactions(settings)
+        )
+    except ForgeError as exc:
+        # The verdict and its artefact are untouched, so the request stays pending and the next turn
+        # tries again: a forge that is down for a minute must not spend somebody's button press.
+        log.warning("an upgrade could not be opened", extra={"error": str(exc)})
+        return None
+    finally:
+        close = getattr(code_forge, "close", None) if code_forge is not None else None
+        if close is not None:
+            close()
+
+
+def _watch_one_opened(session: Session, settings: Settings) -> str | None:
+    """What became of one pull request this instance opened for an upgrade. Item 253.
+
+    **The read credential, because this is a read.** Asking a forge about a pull request writes to
+    no repository, so it uses the token that cannot push — the same reasoning `_verify_one_upgrade`
+    gives, and it means this half of the watch would work in a process that may not push at all.
+
+    Closed per turn for the reason `_open_one_requested` is: a client left open per turn is a socket
+    a minute in a resident process.
+    """
+    from hullwork import upgrades
+
+    forge = make_forge(settings)
+    try:
+        return upgrades.watch_opened(session, forge)
+    except ForgeError as exc:
+        # Nothing is written, so the row keeps saying what it last knew and the next turn asks
+        # again: a verdict recorded for one bad afternoon is worse than a stale one.
+        log.warning("an opened upgrade could not be asked about", extra={"error": str(exc)})
+        return None
+    finally:
+        close = getattr(forge, "close", None) if forge is not None else None
+        if close is not None:
+            close()
+
+
 def _work_loop(
     args: argparse.Namespace, session: Session, settings: Settings, out: TextIO
 ) -> int:
@@ -3309,6 +3346,10 @@ def _work_loop(
                 file=out,
             )
 
+    def say(what: str | None) -> None:
+        """What this dispatcher is doing, for the page. Item 242."""
+        lease.doing(session, holder, what)
+
     print(f"Dispatching continuously as {holder}. Nothing listens on any port.", file=out)
     wait = LOOP_FLOOR_SECONDS
     try:
@@ -3350,6 +3391,7 @@ def _work_loop(
                 print("The model credential works again. Claiming resumes.", file=out)
 
             try:
+                lease.doing(session, holder, "looking for something to do")
                 outcomes = work.run(
                     session, settings, limit=args.limit, slug=args.project, rehearse_into=None
                 )
@@ -3366,6 +3408,33 @@ def _work_loop(
             for outcome in outcomes:
                 where = f" → {outcome.pull_request}" if outcome.pull_request else ""
                 print(f"item {outcome.item_id}: {outcome.outcome.value}{where}", file=out)
+            # **Only when no bug was waiting** (DR-0026, item 233). A production error outranks a
+            # dependency upgrade, and one verification is a clone, an image build and a suite run —
+            # so it happens in the gap, one at a time, and never instead of the work.
+            if not outcomes:
+                # **What a person asked for goes before what the clock asked for** (item 245). This
+                # is one forge round trip against an artefact already on disk; a verification is a
+                # clone, an image build and two suite runs. Doing them the other way round would
+                # mean a button whose answer arrives five minutes later because the instance chose
+                # to start something nobody was waiting for.
+                opened = _open_one_requested(session, settings)
+                if opened:
+                    print(opened, file=out)
+                else:
+                    # **One round trip, and before the five-minute one** (item 253). Asking what
+                    # became of a pull request already opened is cheaper than verifying a new
+                    # upgrade, and until this existed the page said *a draft pull request is
+                    # waiting for a person* about two that had been merged for a day.
+                    became = _watch_one_opened(session, settings)
+                    if became:
+                        print(became, file=out)
+                    tried = _verify_one_upgrade(session, settings, say=say)
+                    if tried:
+                        print(tried, file=out)
+
+            # **Idle is a thing to say, not a thing to leave stale** (item 242). A dispatcher that
+            # stopped mid-sentence would leave the page claiming it is still building an image.
+            lease.doing(session, holder, None)
 
             # Work found → look again at once, because a queue drains fastest when nothing sleeps on
             # it. Nothing found → back off, so an idle instance is idle.
@@ -3640,6 +3709,10 @@ def build_parser() -> argparse.ArgumentParser:
     disable = actions.add_parser("disable", help="deactivate a project without deleting anything")
     disable.add_argument("slug")
     disable.set_defaults(func=_cmd_disable)
+
+    enable = actions.add_parser("enable", help="watch a project again after `disable`")
+    enable.add_argument("slug")
+    enable.set_defaults(func=_cmd_enable)
 
     rotate = actions.add_parser("rotate-secret", help="issue a new webhook token")
     rotate.add_argument("slug")

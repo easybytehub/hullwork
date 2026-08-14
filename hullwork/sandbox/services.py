@@ -232,9 +232,22 @@ class Services:
         self.close()
 
     def close(self) -> None:
-        """Remove every container and the network. Safe to call twice, and never raises."""
+        """Remove every container, its databases and the network. Safe to call twice, never raises.
+
+        **`-v`, and it is the whole of item 244.** `postgres:16` declares
+        `VOLUME /var/lib/postgresql/data` in its own Dockerfile, so every `docker run` of it creates
+        an anonymous volume — and a `docker rm` without `-v` leaves it behind. One per service, per
+        phase, on every attempt and every verification: sixty-nine volumes and 3.2GB on the
+        operator's own host, in a day, after the images had already been fixed.
+
+        `-v` removes the container's **anonymous** volumes and leaves named ones alone, which is
+        the distinction that matters: `hullwork-worktree-*` and `hullwork-envcache-*` have names
+        and owners; this one has neither, and cannot be collected by the reaper for that reason —
+        an anonymous volume is a hex string that says nothing about who made it, and removing those
+        by pattern would delete everything else on the host (item 125).
+        """
         for container in self._containers:
-            _quietly(self._docker, ["rm", "-f", container])
+            _quietly(self._docker, ["rm", "-f", "-v", container])
         self._containers = []
         if self._names:
             _quietly(self._docker, ["network", "rm", self.network])

@@ -227,6 +227,19 @@ class Project(Base):
     )
 
     #: Deactivated rather than deleted: unregistering a project must not destroy its history.
+    #: **Whether the ingest _token_ can write code**, measured by asking (item 228), and when.
+    #:
+    #: The **token**, not the account. `PushCapability.can_push` is what the account may do, and a
+    #: token scoped to reads and issues is refused regardless — measured on this project's own
+    #: instance, where that flag was `True` for both projects while `POST /branches` answered
+    #: `403 … scope(s): [write:repository]`. Recording the account's answer here and painting it
+    #: red would rebuild the permanently-on signal item 073 deleted a whole check for.
+    #:
+    #: `None` is *not measured* and never a `False`. Columns rather than keys inside `manifest`,
+    #: which is the project's own document adopted verbatim (DR-0012) and no place for a fact the
+    #: instance measured — the page read exactly such a key for two items and nothing wrote it.
+    ingest_token_can_push: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    ingest_checked_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), default=None)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
 
@@ -774,6 +787,22 @@ class DispatcherLease(Base):
     #: column — and it must not read as `off`, which is the defect item 105 was closed for.
     error_reporting: Mapped[bool | None] = mapped_column(Boolean, default=None)
 
+    #: What this dispatcher is doing at this moment, in a person's words, or `None` when it is idle.
+    #: Item 242.
+    #:
+    #: **Written by the process rather than deduced by the page.** Everything a reader could infer
+    #: — this heartbeat, an attempt without a `finished_at`, a verdict appearing — has the same hole
+    #: in the middle: between two writes there is nothing to read, and that gap is the four minutes
+    #: somebody is trying to watch. The instance report called it *nothing in progress* while a
+    #: verification built an image and ran a suite twice.
+    #:
+    #: On the lease and not in a table of its own, because it is the same fact: *who is dispatching
+    #: now*. Two rows could disagree about whether one exists, and then neither is worth reading.
+    doing: Mapped[str | None] = mapped_column(String(200), default=None)
+    #: When that started, so the page can say how long it has been going on rather than only what
+    #: it is. A step that has taken nine minutes is the interesting one.
+    doing_since: Mapped[datetime | None] = mapped_column(UtcDateTime(), default=None)
+
 
 class Installation(Base):
     """A name this deployment can be counted by. One row, id 1. Item 151.
@@ -801,3 +830,113 @@ class Installation(Base):
     identifier: Mapped[str] = mapped_column(String(32))
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
+
+
+class DependencyReport(Base):
+    """What OSV had published against what a project pins, and **when that was asked**. DR-0024.
+
+    One row per project, overwritten: this is a claim about a moment, not a history. A history would
+    be a different feature with a different cost, and nobody has asked for one.
+
+    **`asked` is why the row exists.** An advisory list that silently reads empty when the network
+    was down is the worst failure this feature can have — it says *you are fine* on no evidence. So
+    the row records whether the question reached OSV at all, and `note` says what stopped it. That
+    is the operator's own condition on accepting DR-0024, and it is the same *I could not verify
+    this* that has been a first-class answer here since item 199.
+    """
+
+    __tablename__ = "dependency_reports"
+
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    taken_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
+    #: Whether OSV answered. `False` with a `note` is a report; `False` with none is a bug.
+    asked: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[str | None] = mapped_column(Text, default=None)
+    #: How many pinned versions were read, so *nothing published* can be told apart from *nothing
+    #: read*. A project with no lock file has 0 here and no findings, and those are not the same
+    #: sentence.
+    pinned: Mapped[int] = mapped_column(Integer, default=0)
+    #: `[{package, version, source, advisories: [{id, summary, fixed: []}]}]`. JSON rather than two
+    #: more tables, because nothing queries inside it: the page renders it and the next report
+    #: replaces it whole.
+    findings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+
+class UpgradeVerdict(Base):
+    """What happened when this instance tried one published fix. DR-0026, item 233.
+
+    **One row per (project, package, from, to)**, overwritten. The question is *does this upgrade
+    hold today*, and yesterday's answer about the same pair is not a second fact — it is the same
+    fact, stale.
+
+    `outcome` is `bump.Verdict`'s own vocabulary and the four states do not collapse: `clean` is
+    *your suite passed before and after* and **not** *this is safe*; `breaks` is the finding;
+    `will-not-install` is the build failing, which is a different fact from the suite failing; and
+    `already-red` is a suite that was failing before anything was touched, so no claim can be made
+    either way.
+
+    **Nothing here was written anywhere else.** DR-0026 stops the queue at `verify`: no branch, no
+    pull request, no comment. This table is the whole of what the attempt produced.
+    """
+
+    __tablename__ = "upgrade_verdicts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "package", "was", "to", name="uq_upgrade_verdict"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    package: Mapped[str] = mapped_column(String(200))
+    #: The version that was pinned when this was tried. A verdict about a version no longer pinned
+    #: is worse than no verdict, because it reads as current — so the page checks this against the
+    #: report before showing anything.
+    was: Mapped[str] = mapped_column(String(100))
+    to: Mapped[str] = mapped_column(String(100))
+    outcome: Mapped[str] = mapped_column(String(30))
+    #: What the suite or the build said, trimmed. The evidence, not a summary of it.
+    detail: Mapped[str | None] = mapped_column(Text, default=None)
+    tried_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
+    #: What the passing run produced: `{"files": {path: text}, "runs": {...} | None}`. Item 245.
+    #:
+    #: Only a `clean` verdict has one, and it is the whole of what a pull request is opened with.
+    #: Neither half is a convenience. **The files**: `bump.attempt` restores every file it moved, so
+    #: reconstructing the diff later means running the resolver again, and a lock regenerated twice
+    #: can differ — a version published in between, a different ordering, a registry that answered
+    #: differently. Publishing files the suite did not pass against is the defect item 045 is named
+    #: after. **The runs**: they are the evidence the artefact is *for* — the two exit codes and the
+    #: runner's own summary lines — and by the time anybody renders one the containers are gone. A
+    #: pull request opened from this row without them would carry strictly less than the one the
+    #: terminal opens, which is a degradation nobody would see.
+    #:
+    #: **`none_as_null` because emptying it has to be visible from SQL.** Without it, assigning
+    #: `None` writes the JSON text `null` — four bytes, so the storage *is* released, and a row that
+    #: reads `None` in Python. But `WHERE artefact IS NOT NULL` then counts it, which is how the
+    #: check run minutes after the first pull request was opened reported two artefacts where the
+    #: database held one. `forget_stale` filters on exactly that predicate.
+    artefact: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True), default=None
+    )
+    #: The commit the suite ran against, which is where the branch is rooted — never wherever the
+    #: default branch points when somebody presses the button. The base can move freely in between.
+    base_sha: Mapped[str | None] = mapped_column(String(64), default=None)
+    #: When a person asked for this one to be opened. DR-0026: *open stays a button somebody
+    #: presses*, and the receiver that renders the button cannot open anything, so the request is
+    #: written here and the dispatcher acts on it.
+    asked_to_open_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), default=None)
+    #: Where the pull request went. Its presence is what *opened* means.
+    opened_where: Mapped[str | None] = mapped_column(Text, default=None)
+    #: What became of it: `None` until the forge has been asked, then `open`, `merged` or `closed`.
+    #: Item 253.
+    #:
+    #: **Written once was the defect.** `opened_where` alone meant *a draft pull request is waiting
+    #: for a person*, for ever — so a merged one kept asking for a review that had happened, and one
+    #: a person closed without merging displayed their "no" as work they owed. Item 138 split the
+    #: same two facts on `Item` and this is that split, one noun along.
+    opened_state: Mapped[str | None] = mapped_column(String(10), default=None)
+    #: When the forge was last asked about it, so a pull request that sits open for a week costs one
+    #: request per report cycle rather than one per turn. `Item.merge_checked_at`'s counterpart.
+    open_checked_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), default=None)
+    #: Why a request produced no pull request — already open from an earlier run, or the forge
+    #: refused. Never silence: a row that was asked for and shows neither outcome is a row somebody
+    #: presses again.
+    open_note: Mapped[str | None] = mapped_column(Text, default=None)

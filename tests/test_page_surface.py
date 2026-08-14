@@ -204,7 +204,22 @@ _MAY_POST = (
     # holds none that can push, which is the law this does not touch.
     f"{page.PREFIX}/{{token}}/projects",
     # Item 207: the rest of a project's life, on one route with an action rather than four names.
-    f"{page.PREFIX}/{{token}}/projects/{{slug}}",
+    #
+    # **Item 250 moved it one segment deeper rather than adding four more.** A `POST` answers at the
+    # URL its form posted to, so the document it answers with has to be the one that URL serves;
+    # `feature` names that document and nothing else. At `projects/{slug}` three of its four
+    # branches answered with a document written for somewhere else, and every relative link in
+    # those answers — which is all of them — resolved from the wrong depth.
+    f"{page.PREFIX}/{{token}}/projects/{{slug}}/{{feature}}",
+    # **Item 219**, and this list failing again on the day it was written is the guard working a
+    # third time. The instance's own upkeep — the lease, stranded verdicts, and forgetting old
+    # delivery bodies — is database work and one forge call the receiver already makes. `prune` is
+    # the only destructive control on this page and it takes two submissions.
+    f"{page.PREFIX}/{{token}}/instance",
+    # Item 219: what an operator does to one item that is not a decision about it. The two
+    # decisions keep their own routes above, because they are the product's gate and are pressed by
+    # somebody who may be reading nothing else.
+    f"{page.PREFIX}/{{token}}/items/{{item_id}}",
 )
 
 
