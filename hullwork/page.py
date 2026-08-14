@@ -31,15 +31,16 @@ a check somebody re-reads rather than a default nobody does.
 from __future__ import annotations
 
 import html
+import json
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from hullwork import __version__, spend
 from hullwork.models import Attempt as _Attempt
@@ -122,6 +123,22 @@ def opens(session: Session, token: str, *, acting: Acting | None = None) -> bool
     access = session.scalars(select(PageAccess).limit(1)).one_or_none()
     expected = access.token_hash if access is not None else _DECOY_HASH
     return verify_token(token, expected) and access is not None
+
+
+def the_url_is_the_credential(token: str) -> bool:
+    """Whether this request is reading through a minted URL rather than through its session.
+
+    **Asked by the one action that revokes it** (item 250). `page-token` mints a new read link and
+    stops every old one — including, when the answer is served at one of them, the URL it is being
+    read on: every link on that answer is correctly written and every one of them answers `404`.
+    Saying so is the difference between a reader who opens the new link and one who clicks.
+
+    Here rather than in the route, because `MINE` is this module's reserved word and a route that
+    knows it is a route with an opinion about the gate — which is the property
+    `test_there_is_one_gate_and_not_ten` exists to keep, at four days' cost across items 193, 194,
+    200 and 203.
+    """
+    return token != MINE
 
 
 def offers_a_login(token: str, acting: Acting | None) -> bool:
@@ -305,6 +322,12 @@ body {
    to `--measure`, because the fix for dead margins is not 120-character lines. */
 .wrap { max-width: 108rem; margin: 0 auto; padding: 0 2rem 4rem; }
 .sheet > p, .sheet > .sub, .sheet .why, footer { max-width: var(--measure); }
+/* And the same measure inside a fold. A child selector cannot see them: everything a `<details>`
+   holds is one level deeper than the sheet, so the prose under an open fold ran the full 1500px
+   while the identical sentence above it was held to 68ch.
+   `.folded` and not `details >`, because `_fold` wraps its body in that div — the first version of
+   this rule named a structure the page does not have, and the browser found it in ten seconds. */
+.sheet .folded > p, .sheet .folded > .sub { max-width: var(--measure); }
 /* A headline needs a shorter measure than a paragraph, and `ch` is relative to the element's own
    size: 68ch at 28px came out 1170px wide, which is a measure in name only. */
 .sheet .lede { max-width: 34ch; }
@@ -437,8 +460,18 @@ a:hover { text-decoration-color: currentColor; }
   border-top: 1px solid var(--rule);
 }
 .standing li:first-child { border-top: 0; }
+/* A disclosure inside a row spans it (item 236). Left in the first column it inherits the pill's
+   6.2rem and sets its summary five words deep, one word per line. */
+.standing li > details { grid-column: 1 / -1; margin: .5rem 0 0; border: 0; background: none; }
+.standing li > details > summary { padding: 0; font-size: var(--t-md); }
+.standing li > details > .folded { padding: .4rem 0 0; }
 .standing .pill { justify-self: start; color: var(--c, var(--faint)); border-color: currentColor; }
 .standing .name { font-weight: 550; color: var(--ink); }
+/* A sentence is not a label (item 242). `.name` is set in small caps because it holds a thing's
+   name — `CRYPTOGRAPHY 48.0.1` — and the history holds whole sentences, which small caps makes
+   slower to read and louder than the thing they describe. */
+.standing .said { color: var(--ink); text-transform: none; letter-spacing: 0;
+                  font: 400 var(--t-md)/1.45 var(--sans); }
 .standing .why {
   grid-column: 2;
   color: var(--muted);
@@ -461,6 +494,126 @@ a:hover { text-decoration-color: currentColor; }
 @media (max-width: 34rem) {
   .standing li { grid-template-columns: 1fr; gap: .35rem 0; }
   .standing .why { grid-column: 1; }
+}
+
+/* --- the subject table (DR-0028) ------------------------------------------------------------
+   A component and not this view's markup: the same shape is going to the door, to Errors, to This
+   instance and to Projects, and a table invented four times is four tables that drift.
+
+   The row is the subject. Everything known about it is in it, at a fixed height, aligned in
+   columns — 42px against the 164px the card-paragraph it replaces spent on three facts. What made
+   that view 12.6 screens was not the amount of information; it was that each fact was a paragraph
+   and the outcome lived in a second list. */
+.tally {
+  display: flex; flex-wrap: wrap; gap: .3rem 1.1rem;
+  font-size: var(--t-sm); color: var(--muted);
+  padding: .55rem .8rem; margin: 0 0 1.3rem;
+  background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r);
+}
+.tally b { color: var(--ink); font-variant-numeric: tabular-nums; margin-right: .15rem; }
+.band { margin: 0 0 1.5rem; }
+/* The heading carries the sentence, once. A row that repeats it is the column that must not
+   exist. */
+.band h3 {
+  display: flex; align-items: baseline; gap: .6rem;
+  margin: 0 0 .2rem; font: 600 var(--t-md)/1.4 var(--sans); color: var(--ink);
+}
+.band h3 em { font-style: normal; font-weight: 400; color: var(--faint); font-size: var(--t-sm);
+              flex: 1; }
+.band h3 > b { font: 400 var(--t-sm)/1 var(--sans); color: var(--faint);
+               font-variant-numeric: tabular-nums; }
+/* Fixed, so one long row cannot set the width of the table. A package pinned three times and fixed
+   on four branches stretched it to 7,208px before the model stopped pairing every version with
+   every destination — and a table that can be widened by its contents will be, eventually. */
+.subjects { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.subjects tr { border-top: 1px solid var(--rule); }
+.subjects tr:hover { background: var(--sunk); }
+.subjects td { padding: 0 .6rem; height: 2.6rem; vertical-align: middle; }
+.subjects td:first-child { padding-left: 0; }
+.subjects td:last-child { padding-right: 0; text-align: right; }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: .55rem;
+       background: var(--c, var(--faint)); vertical-align: 1px; }
+.dot.passed  { --c: var(--passed); }
+.dot.refused { --c: var(--refused); }
+.dot.human   { --c: var(--human); }
+.dot.working { --c: var(--working); }
+.dot.waiting { --c: var(--waiting); }
+.dot.faint   { --c: var(--faint); }
+.who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.who .thing { font-weight: 550; margin-right: .5rem; }
+/* Versions and paths are compared, not read: monospaced so a digit sits under a digit. */
+.who .was, .who .to, .at { font: var(--t-sm)/1.4 var(--mono); }
+.who .was { color: var(--muted); }
+.who .to { color: var(--ink); }
+.who .arr { color: var(--faint); margin: 0 .35rem; }
+.who .note { color: var(--refused); font-size: var(--t-sm); margin-left: .55rem; }
+/* A row whose subject is a sentence rather than a name: the item's own title. It takes the space
+   the versions take on a dependency row, and it is the one thing in the row allowed to be long. */
+.who .said { color: var(--muted); margin-left: .55rem; }
+.subjects .do a { font-size: var(--t-sm); }
+/* Context, and it has a known maximum — a lock file's path, or a slug and a lane. Given a width,
+   the subject takes everything else; without one a fixed table split the remainder evenly and cut
+   the item's title at eight words while `hullwork · amber` sat in twelve rem of air. */
+.at { color: var(--faint); text-align: right; white-space: nowrap; width: 15rem;
+      overflow: hidden; text-overflow: ellipsis; }
+.subjects .fold { width: 3rem; text-align: right; }
+.subjects details.adv { border: 0; background: none; margin: 0; display: inline-block;
+                        position: relative; }
+.subjects details.adv > summary {
+  padding: .05rem .4rem; font: var(--t-xs)/1.5 var(--sans); color: var(--faint);
+  font-variant-numeric: tabular-nums; border: 1px solid var(--rule); border-radius: var(--r-chip);
+}
+.subjects details.adv[open] > summary { color: var(--ink); border-color: var(--faint); }
+.subjects details.adv > .folded {
+  position: absolute; right: 0; z-index: 3; width: min(30rem, 70vw); text-align: left;
+  margin-top: .35rem; padding: .6rem .8rem;
+  background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r);
+  box-shadow: 0 10px 28px light-dark(rgba(16,19,25,.13), rgba(0,0,0,.5));
+  font-size: var(--t-sm); list-style: none;
+}
+.subjects details.adv > .folded li { margin: .35rem 0; color: var(--muted); }
+.subjects details.adv > .folded li a { font: var(--t-xs)/1.4 var(--mono); margin-right: .4rem; }
+.subjects .do { width: 9.5rem; }
+/* A subject that is a sentence needs the width a button was holding. An item's title is the
+   most informative thing in its row and eighteen of twenty-eight were being cut at eight words,
+   while the column beside them held `#24`. The dependency table keeps the wider one: its action is
+   a button with words in it. Two contents, two widths, one component. */
+.subjects.narrow .do { width: 4.5rem; }
+
+/* A figure and what it counts (item 248). The number is the thing being compared, so it is
+   tabular, right-aligned in its own column, and set at the size the strip uses — the six sections
+   that were prose bullets put it mid-sentence, where two of them never line up. */
+.figures { width: 100%; border-collapse: collapse; }
+.figures tr { border-top: 1px solid var(--rule); }
+.figures tr:first-child { border-top: 0; }
+.figures td { padding: .22rem 0; vertical-align: baseline; }
+/* Set at body size rather than at the strip's: the strip has five numbers and this has five rows,
+   so what makes one scannable here is the column and the tabular figures, not the size. Rendered
+   large with the caveat on its own line it made this view *taller* than the bullets it replaced,
+   which is the opposite of the point. */
+.fig { width: 3.2rem; text-align: right; padding-right: .8rem !important;
+       font: 600 var(--t-base)/1.45 var(--sans); font-variant-numeric: tabular-nums;
+       color: var(--ink); }
+.means { color: var(--ink); }
+.caveat { color: var(--faint); font-size: var(--t-sm); margin-left: .5rem; }
+.subjects.narrow .at { width: 13rem; }
+.subjects .do form { margin: 0; }
+.subjects .do button { font-size: var(--t-sm); padding: .25rem .6rem; }
+/* Below this the row stops being a row (item 221's rule, kept). Hiding the context instead was
+   tried and is worse: the project, the lane and the time are how a reader tells two failures of the
+   same kind apart, and a list that drops them is a list of titles. Two lines rather than the seven
+   the old table stacked — the subject, then everything about it, then anything to do. */
+@media (max-width: 46rem) {
+  .subjects, .subjects tbody, .subjects tr, .subjects td { display: block; }
+  .subjects tr.subject { padding: .5rem 0; }
+  .subjects td { height: auto; padding: 0; width: auto; text-align: left; }
+  .subjects .who { white-space: normal; overflow: visible; }
+  .subjects .at, .subjects .fold {
+    display: inline-block; width: auto; text-align: left; margin: .25rem .7rem 0 0;
+    font-size: var(--t-xs);
+  }
+  .subjects .do { margin-top: .35rem; }
+  .subjects .do:empty { margin: 0; }
 }
 
 /* --- the rail (item 212, DR-0023) -----------------------------------------------------------
@@ -526,6 +679,25 @@ a:hover { text-decoration-color: currentColor; }
   .sheet { grid-column: 2; min-width: 0; }
 }
 
+/* How much is behind each name (item 235). Tabular so the column of numbers lines up, and pushed
+   to the right edge of the link so the words stay left-aligned and scannable. */
+.rail a { display: flex; align-items: baseline; gap: .5rem; }
+.rail .count {
+  margin-left: auto;
+  font: 500 var(--t-2xs)/1 var(--sans);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+.rail a[aria-current="page"] .count, .rail a:hover .count { color: var(--muted); }
+
+/* A feature's section (item 235, DR-0027): a label, the sentence under it, then the thing.
+   The gap above a section is what separates two features on a page that no longer folds them. */
+.feature { margin: 2.4rem 0 0; }
+.feature:first-of-type { margin-top: 1.6rem; }
+.feature > h2 { margin-top: 0; }
+.says { margin: -.35rem 0 .9rem; max-width: var(--measure);
+        font-size: var(--t-md); color: var(--muted); }
+
 /* The heading row and the primary action on it (item 214). The action wraps under the title on a
    narrow window rather than squeezing both, because a button that is half a word wide is not a
    button. */
@@ -541,7 +713,7 @@ details.primary > summary {
 }
 details.primary > summary::-webkit-details-marker { display: none; }
 details.primary > summary::before { content: "+"; margin-right: .4rem; font-weight: 600; }
-details.primary[open] > summary::before { content: "\\2212"; }
+details.primary[open] > summary::before { content: "\\2212 "; }
 details.primary > summary:hover { background: var(--sunk); }
 details.primary[open] {
   flex: 1 1 100%; background: var(--raise); border: 1px solid var(--rule);
@@ -561,6 +733,10 @@ details.primary[open] > summary { border: 0; background: none; padding: .2rem 0 
   background: var(--canvas); color: var(--ink);
 }
 .new button { align-self: end; }
+
+/* A limit reads as description, not as a blocker (item 220). They sit beside the reason a feature
+   is off and they are a different kind of sentence: true either way, and the honest half. */
+.why.limit { color: var(--muted); padding-left: .8rem; border-left: 2px solid var(--rule); }
 
 .decisions {
   list-style: none; padding: 0; margin: 0 0 1.4rem;
@@ -685,7 +861,11 @@ details > summary::-webkit-details-marker { display: none; }
 details > summary::before { content: "+"; font: 400 var(--t-md)/1 var(--mono); color: var(--faint);
                             width: .7rem; text-align: center; }
 /* The typographic minus, which pairs the + above rather than a hyphen. */
-details[open] > summary::before { content: "\2212 "; }
+/* The escape is doubled for Python before it is an escape for CSS (item 219): this is an ordinary
+   triple-quoted string, so a single-backslash 2212 is read as an octal escape first. The served
+   stylesheet carried a raw U+0091 control character and a literal digit — the stray 2 beside every
+   open fold, on every release so far. Comments here reach the browser: no markdown, no escapes. */
+details[open] > summary::before { content: "\\2212 "; }
 details > summary:hover { color: var(--ink); background: var(--sunk); }
 .folded { padding: 0 var(--pad) 1.1rem; }
 .folded > :first-child { margin-top: 0; }
@@ -756,6 +936,10 @@ button.linkish { background: none; border: 0; padding: 0; font: inherit; color: 
   border: 1px solid var(--rule); border-radius: var(--r-chip);
   background: var(--canvas); color: var(--ink);
 }
+/* WCAG 2.2 AA 2.5.8 asks 24x24, and a row's link measured 17x17 (item 221). The *Inline* exception
+   covers a link inside a sentence; the only way to open an item is not that. */
+.list td a { display: inline-block; min-width: 24px; min-height: 24px; line-height: 24px; }
+
 .stuck { font: 600 var(--t-2xs)/1 var(--sans); letter-spacing: .05em; text-transform: uppercase;
          color: var(--refused); border: 1px solid currentColor; border-radius: var(--r-chip);
          padding: .16rem .34rem; margin-left: .35rem; }
@@ -776,6 +960,34 @@ footer strong { color: var(--muted); font-weight: 550; }
 
 @media (prefers-reduced-motion: no-preference) {
   a, button, summary { transition: color 120ms ease, background 120ms ease; }
+}
+
+/* The item list stops being a table where a table stops working (item 221). Seven columns on a
+   390px screen wrapped titles to five lines and pushed `issue / pull` behind a sideways scroll
+   nobody discovers — which is not the same as not breaking the page, and is a lower bar.
+
+   One markup, two shapes: the labels come from `data-label`, so nothing here is a second template
+   that has to be kept in step with the first. */
+@media (max-width: 46rem) {
+  .list, .list tbody { display: block; width: auto; }
+  .list tr:first-child { display: none; }
+  .list tr {
+    display: flex; flex-direction: column;
+    background: var(--raise); border: 1px solid var(--rule); border-radius: var(--r);
+    padding: .7rem var(--pad); margin: 0 0 .6rem;
+  }
+  .list td { border: 0; padding: .15rem 0; }
+  /* The title identifies the item, so it leads — `order` rather than a second markup, which is the
+     whole reason the cells carry their own labels. */
+  .list td[data-label="title"] {
+    order: -1; font: 550 var(--t-base)/1.35 var(--sans); padding-bottom: .35rem;
+  }
+  .list td:not([data-label="title"])::before {
+    content: attr(data-label) " ";
+    display: inline-block; min-width: 6.5rem;
+    font: 550 var(--t-2xs)/1.6 var(--sans); letter-spacing: .06em;
+    text-transform: uppercase; color: var(--faint);
+  }
 }
 
 @media (max-width: 40rem) {
@@ -841,6 +1053,9 @@ def _document(
     up: str = "",
     state: tuple[str, str] | None = None,
     here: str = "",
+    counts: Counts | None = None,
+    inside: str | None = None,
+    projects: Sequence[tuple[str, int]] = (),
 ) -> str:
     """The whole page. No script, no external asset, one inlined stylesheet.
 
@@ -872,7 +1087,7 @@ def _document(
         # **Every page, from here** (item 212). Rendering it per view is four chances to grow four
         # opinions about what this product contains, which is the drift five items this week each
         # cost a day to.
-        f"{_rail(acting, here=here, up=up)}\n"
+        f"{_rail(acting, here=here, up=up, counts=counts, inside=inside, projects=projects)}\n"
         # **And the way in, for the same reason.** It lived inside the instance report, so moving
         # the front door left a locked-out operator landing on a page that said nothing about the
         # lockout — a working lockout looking like a broken login, which is the exact failure item
@@ -890,28 +1105,190 @@ def _document(
 #: operator's — DR-0021 gives a read link the instance and nothing that administers it — and a
 #: control that leads to a `404` is worse than one that is not there, so a reader is shown neither.
 _NOUNS: tuple[tuple[str, str, bool], ...] = (
-    ("./", "Items", False),
-    ("projects", "Projects", False),
+    ("./", "What needs you", False),
+    ("projects", "All projects", False),
     ("instance", "This instance", False),
-    ("doctor", "Why it will not work", True),
-    ("config", "What it received", True),
+    ("doctor", "Diagnostics", True),
+    ("config", "Configuration", True),
+)
+
+#: A project's features, in the order somebody works through them, and where each lives **under**
+#: `projects/<slug>/`. Item 237, and it is the operator's own correction of item 235:
+#:
+#:   *¿No será mejor plantear esto mismo, pero a nivel de proyecto? Es decir, tú entras en un
+#:   proyecto, y ves todas las features. Así no mezclamos cosas.*
+#:
+#: He is right, and the reason is the one item 235 got wrong: a page called *Dependencies* holding
+#: every project's advisories one after another is a wall at two projects and unusable at ten.
+#: Nobody works by feature across clients — they work on a client. The feature names were the fix;
+#: the axis was not.
+_IN_A_PROJECT: tuple[tuple[str, str, bool], ...] = (
+    ("", "Overview", False),
+    ("errors", "Errors", False),
+    ("fixes", "Fixes", False),
+    ("dependencies", "Dependencies", False),
+    ("deliveries", "Deliveries", False),
+    ("settings", "Settings", True),
 )
 
 
-def _rail(acting: Acting, *, here: str = "", up: str = "") -> str:
+@dataclass(frozen=True)
+class Counts:
+    """How much there is of each of a project's features, for the rail. Item 235, item 237.
+
+    **A number in the navigation is what makes it a map rather than a list of words.** It answers
+    *is there anything in there* before a click, which is the question that had a reader opening
+    four folds to find out that three of them were empty.
+
+    Zero renders as nothing at all, not as `0`: item 073's rule is that a signal which is always on
+    is not a signal, and its corollary is that a badge reading zero on every page is furniture
+    pretending to be information.
+    """
+
+    errors: int = 0
+    fixes: int = 0
+    dependencies: int = 0
+    deliveries: int = 0
+
+    def of(self, where: str) -> int:
+        return {
+            "errors": self.errors,
+            "fixes": self.fixes,
+            "dependencies": self.dependencies,
+            "deliveries": self.deliveries,
+        }.get(where, 0)
+
+
+def how_much_of_each(session: Session, project_id: int) -> Counts:
+    """Four counts for one project's rail. Item 237.
+
+    Read here rather than passed in by every view, because a rail that is right on three pages and
+    stale on the fourth is worse than no rail: five views growing five opinions about what this
+    product contains is the drift DR-0023 exists to stop.
+    """
+    from hullwork.models import Delivery, DependencyReport
+
+    def count(what: object, where: object) -> int:
+        try:
+            return int(
+                session.scalar(select(func.count()).select_from(what).where(where)) or 0  # type: ignore[arg-type]
+            )
+        except Exception:  # pragma: no cover - a rail must never be what breaks a page
+            return 0
+
+    report = session.get(DependencyReport, project_id)
+    # **The number in the rail has to be the number in the view** (item 247). It counted *findings*
+    # beside a view that counts *packages* — `Dependencies 25` next to `20 packages`, two true
+    # numbers of two different things in one eye-line. A package pinned three times is three
+    # findings and one row, and the row is what a click leads to.
+    findings = (
+        len({str(one.get("package") or "") for one in (report.findings or [])})
+        if report is not None and report.asked
+        else 0
+    )
+    return Counts(
+        errors=count(_Item, _Item.project_id == project_id),
+        fixes=count(
+            _Attempt,
+            _Attempt.item_id.in_(select(_Item.id).where(_Item.project_id == project_id)),
+        ),
+        dependencies=findings,
+        deliveries=count(Delivery, Delivery.project_id == project_id),
+    )
+
+
+def each_project(session: Session) -> list[tuple[str, int]]:
+    """Every project and how much is waiting in it, for the rail outside a project. Item 237.
+
+    The number is **what needs a person**, not how much exists: a count of items would read the
+    same on a project that is fine and one that is stuck, and the whole of the front door is
+    *which of these wants me*.
+    """
+    waiting = (ItemState.WAITING_APPROVAL, ItemState.HUMAN_ONLY)
+    out: list[tuple[str, int]] = []
+    for project in session.scalars(select(_Project).order_by(_Project.slug)).all():
+        how_many = int(
+            session.scalar(
+                select(func.count())
+                .select_from(_Item)
+                .where(_Item.project_id == project.id, _Item.state.in_(waiting))
+            )
+            or 0
+        )
+        out.append((project.slug, how_many))
+    return out
+
+
+def _rail(
+    acting: Acting,
+    *,
+    here: str = "",
+    up: str = "",
+    counts: Counts | None = None,
+    inside: str | None = None,
+    projects: Sequence[tuple[str, int]] = (),
+) -> str:
     """The sidebar every page carries, from one function.
 
     Four pages growing four opinions about what this product contains is the drift items 193, 194,
     200, 203 and 211 each cost a day to. This is that lesson applied before it happens rather than
     after.
+
+    **Two modes, and the project is the axis** (item 237). Outside a project it lists the projects
+    and what belongs to the instance; `inside` a project it lists that project's features and
+    nothing else, so nothing on screen is ever about two projects at once.
+
+    Item 235 named the features and put them on pages that spanned every project, which is the same
+    mistake one level up: a reader does not go looking for *dependencies*, they go looking for
+    *simplecheck*.
     """
-    links = "".join(
-        f'<a href="{up}{where}"'
-        + (' aria-current="page"' if where == here else "")
-        + f">{_h(name)}</a>"
-        for where, name, operators_only in _NOUNS
-        if not operators_only or acting.csrf
+    if inside is not None:
+        return _the_projects_rail(acting, here=here, up=up, counts=counts, slug=inside)
+    links = ""
+    for slug, how_many in projects:
+        badge = f'<span class="count">{how_many}</span>' if how_many else ""
+        links += f'<a href="{up}projects/{_h(slug)}">{_h(slug)}{badge}</a>'
+    if projects:
+        links = (
+            f'<span class="group">Projects</span>{links}'
+            '<span class="group">This instance</span>'
+        )
+    for where, name, operators_only in _NOUNS:
+        if operators_only and not acting.csrf:
+            continue
+        links += (
+            f'<a href="{up}{where}"'
+            + (' aria-current="page"' if where == here else "")
+            + f">{_h(name)}</a>"
+        )
+    return f'<nav class="rail" aria-label="Sections">{links}</nav>'
+
+
+def _the_projects_rail(
+    acting: Acting, *, here: str, up: str, counts: Counts | None, slug: str
+) -> str:
+    """Inside a project: its features, and the way back out. Item 237.
+
+    The way out is first and it is a link rather than a heading, because a rail that replaces itself
+    has to say what it replaced — otherwise somebody two levels in has no cue that the other
+    projects still exist.
+    """
+    links = (
+        f'<a class="out" href="{up}./">&larr; All projects</a>'
+        f'<span class="group">{_h(slug)}</span>'
     )
+    for where, name, operators_only in _IN_A_PROJECT:
+        if operators_only and not acting.csrf:
+            continue
+        how_many = counts.of(where) if counts is not None else 0
+        # Zero is rendered as nothing, not as `0`. Item 073's rule, one turn further: a badge that
+        # is on every row all the time is furniture pretending to be information.
+        badge = f'<span class="count">{how_many}</span>' if how_many else ""
+        links += (
+            f'<a href="{up}projects/{_h(slug)}{"/" + where if where else ""}"'
+            + (' aria-current="page"' if where == here else "")
+            + f">{_h(name)}{badge}</a>"
+        )
     return f'<nav class="rail" aria-label="Sections">{links}</nav>'
 
 
@@ -963,7 +1340,12 @@ def _what_this_instance_allows(settings: Settings) -> str:
     """
     from hullwork.doctor import policies
 
-    return f"<h2>What this instance allows</h2><p>{_h(policies(settings).detail)}</p>"
+    return _section(
+        "What it allows",
+        "The three policies an attempt runs under, which is what a reviewer is judging when they "
+        "judge its artefact.",
+        f"<p>{_h(policies(settings).detail)}</p>",
+    )
 
 
 def _the_credential_split(session: Session) -> str:
@@ -978,7 +1360,7 @@ def _the_credential_split(session: Session) -> str:
     for project in projects:
         # Stored by `status`'s audit rather than probed here: a page render must not spend a forge
         # request, and a reader refreshing would spend one each time.
-        verdict = (project.manifest or {}).get("__ingest_can_push__") if project.manifest else None
+        verdict = project.ingest_token_can_push
         if verdict is not None:
             measured.append(f"{project.slug}: {'CAN push' if verdict else 'cannot push, measured'}")
     tail = (
@@ -988,7 +1370,12 @@ def _the_credential_split(session: Session) -> str:
         'not exist. It is not asked from this page: a render must not spend somebody\'s forge '
         'quota.</p>'
     )
-    return f"<h2>Which half holds what</h2><p>{_own_prose(_SPLIT)}</p>{tail}"
+    return _section(
+        "The two halves",
+        "Which credential each half holds, and what this instance measured about them rather than "
+        "what the design promises.",
+        f"<p>{_own_prose(_SPLIT)}</p>{tail}",
+    )
 
 
 #: The twelve states, grouped into the six questions a reader actually has. Item 143.
@@ -1056,6 +1443,16 @@ def _ago(when: datetime | None) -> str:
 _DISPATCHABLE = (ItemState.READY, ItemState.WAITING_APPROVAL)
 
 
+def _since(when: datetime | None) -> str:
+    """`_ago`'s answer as a phrase that reads after a verb: *3h ago*, or *just now*.
+
+    Item 247, found on the deployed door: `_ago` answers `just now` for anything under a minute, and
+    every caller appending " ago" to it produced **just now ago**.
+    """
+    said = _ago(when)
+    return said if said in ("just now", "not recorded") else f"{said} ago"
+
+
 def _stuck(item: _Item) -> str | None:
     """Why this item can **never** be attempted, or `None` if nothing stops it. Item 166.
 
@@ -1112,6 +1509,143 @@ def _proof(session: Session, *, merged: int, holding: int, recurred: int, watch:
         for name, count, gloss, tone in cells
     )
     return f'<section class="proof">{figures}</section>'
+
+
+def _figures(rows: Sequence[tuple[int, str, str]]) -> str:
+    """A count, what it counts, and the caveat under it. DR-0028, item 248.
+
+    **The second skin of a structure the terminal already prints as sentences** — the same pattern
+    item 050 used for the artefact, and for the same reason: one construction, two skins, because a
+    second *computation* is what comes apart. `outcomes.Desk` and `outcomes.Funnel` are the
+    construction; `desk_lines` is the terminal's skin and this is the page's.
+
+    Rows with a zero are not passed in. A row of noughts reads like a failure rather than like a
+    beginning, which is `desk_lines`'s own rule and the one thing both skins must agree on.
+    """
+    if not rows:
+        return ""
+    lines = "".join(
+        f'<tr class="figure"><td class="fig">{count}</td>'
+        f'<td class="means">{_h(means)}'
+        + (f'<span class="caveat">{_h(caveat)}</span>' if caveat else "")
+        + "</td></tr>"
+        for count, means, caveat in rows
+    )
+    # In the container the rule asks for (item 215): every table on this page sits in something
+    # that scrolls on its own, and a two-column table being unable to overflow is a reason to
+    # believe it rather than a reason to exempt it.
+    return f'<div class="wide"><table class="figures">{lines}</table></div>'
+
+
+def _desk_figures(counted: object) -> str:
+    """What arrived and how much left, as figures rather than as four sentences. Item 248."""
+    rows: list[tuple[int, str, str]] = []
+    arrived = int(getattr(counted, "arrived", 0))
+    if not arrived:
+        return ""
+    rows.append((arrived, "claims arrived", ""))
+    left = int(getattr(counted, "left_with_evidence", 0))
+    if left:
+        change = int(getattr(counted, "with_a_change", 0))
+        refusal = int(getattr(counted, "with_a_refusal", 0))
+        how = []
+        if change:
+            how.append(f"{change} with a change")
+        if refusal:
+            how.append(f"{refusal} with a reasoned refusal and the runs behind it")
+        rows.append((left, "left your desk with evidence attached", " · ".join(how)))
+    for field, means in (
+        ("still_waiting", "still in the queue"),
+        ("running", "being attempted now"),
+    ):
+        value = int(getattr(counted, field, 0))
+        if value:
+            rows.append((value, means, ""))
+    handed = int(getattr(counted, "handed_over", 0))
+    if handed:
+        # **Never rounded into good news** (`desk_lines`'s rule): this is the one figure here that
+        # can embarrass the product, and it keeps its own words.
+        rows.append((
+            handed, "went onto your desk rather than off it",
+            "red lane, or a pull request somebody read and refused",
+        ))
+    return _figures(rows)
+
+
+def _funnel_figures(counted: object) -> str:
+    """Every attempt, by how it ended. Item 248."""
+    rows: list[tuple[int, str, str]] = []
+    fair = int(getattr(counted, "fair_try", 0))
+    if fair:
+        parts = []
+        for field, said in (
+            ("pull_requests", "opened a pull request"),
+            ("not_reproducible", "found nothing to reproduce"),
+            ("failed", "could not produce a passing suite"),
+        ):
+            value = int(getattr(counted, field, 0))
+            if value:
+                parts.append(f"{value} {said}")
+        rows.append((fair, "attempts got a fair try", " · ".join(parts)))
+    pulls = int(getattr(counted, "pull_requests", 0))
+    merged = int(getattr(counted, "merged", 0))
+    if pulls:
+        # **Counts, never a percentage** (item 119): four attempts are not a rate, and a percentage
+        # invites comparing instances running different code over different repositories.
+        rows.append((merged, f"of those {pulls} pull request(s) were merged", ""))
+    never = getattr(counted, "never_counted", None)
+    if isinstance(never, Mapping) and never:
+        why = " · ".join(f"{n} {_h(str(name))}" for name, n in never.items())
+        rows.append((sum(int(n) for n in never.values()), "never counted against an item", why))
+    rehearsals = int(getattr(counted, "rehearsals", 0))
+    if rehearsals:
+        rows.append((
+            rehearsals, "rehearsals",
+            "they publish nothing and are counted in none of the above",
+        ))
+    running = int(getattr(counted, "in_flight", 0))
+    if running:
+        rows.append((running, "started and not finished", ""))
+    return _figures(rows)
+
+
+def _review_figures(counted: object, said: Sequence[str]) -> str:
+    """What became of the pull requests, as figures where they are counts. Item 248.
+
+    **Two of its lines are counts and one is a duration**, so this keeps the sentences for what is
+    not a count rather than forcing a table onto a median. The rule the whole item runs on: a figure
+    goes in the column, and prose that is genuinely prose stays prose.
+    """
+    rows: list[tuple[int, str, str]] = []
+    merged = int(getattr(counted, "merged", 0))
+    if merged:
+        rows.append((merged, "merged by a human", ""))
+    waiting = int(getattr(counted, "waiting", 0))
+    if waiting:
+        rows.append((waiting, "waiting for a human", "this is the review debt"))
+    rejected = getattr(counted, "rejected", None)
+    if isinstance(rejected, Mapping) and rejected:
+        why = " · ".join(f"{n} {_h(str(name))}" for name, n in rejected.items())
+        rows.append((sum(int(n) for n in rejected.values()), "refused, with a reason", why))
+    rest = "".join(
+        f"<p class=\"sub\">{_h(line)}</p>" for line in said if line[:1].isalpha()
+    )
+    return _figures(rows) + rest
+
+
+def _section(label: str, says: str, body: str) -> str:
+    """A feature's section: a label you can scan, the sentence under it, then the thing. Item 235.
+
+    **The headings were sentences** — *What is published against what it pins*, *What arrived, and
+    how much left your desk* — and an eye moving down the page could not use one of them. They were
+    accurate and they were load-bearing for navigation, which prose cannot do.
+
+    Nothing this product says about what it measured is deleted here. The sentence moves one line
+    down and into grey, where it explains rather than labels, and the label is a word somebody would
+    have searched for.
+    """
+    said = f'<p class="says">{says}</p>' if says else ""
+    return f'<section class="feature"><h2>{_h(label)}</h2>{said}{body}</section>'
 
 
 def _fold(summary: str, body: str) -> str:
@@ -1353,6 +1887,134 @@ def _strip(session: Session) -> str:
     return f'<div class="strip">{"".join(cells)}</div>'
 
 
+def what_it_has_been_doing(session: Session, *, limit: int = 8) -> str:
+    """The last few things this instance did, newest first. Item 242.
+
+    **Merged from what is already stored** — a verdict's `tried_at`, an attempt's `finished_at`, a
+    dependency report's `taken_at` — rather than from a log table nobody writes to. A second record
+    of the same events could disagree with them, and then a reader has to decide which to believe.
+
+    It is the answer to the question a verdict cannot answer on its own: *when did that happen, and
+    what else was going on around it*.
+    """
+    from hullwork.models import DependencyReport, UpgradeVerdict
+
+    where: dict[int, str] = {
+        one.id: one.slug for one in session.scalars(select(_Project)).all()
+    }
+    events: list[tuple[datetime, str, str]] = []
+    for verdict in session.scalars(
+        select(UpgradeVerdict).order_by(UpgradeVerdict.tried_at.desc()).limit(limit)
+    ).all():
+        said, colour = _WHAT_IT_MEANT.get(
+            verdict.outcome, (f"ended as {verdict.outcome}", "c-idle")
+        )
+        events.append((
+            verdict.tried_at,
+            colour,
+            f"{_h(where.get(verdict.project_id, '?'))} · tried "
+            f"{_h(verdict.package)} {_h(verdict.was)} → {_h(verdict.to)} — {_h(said)}",
+        ))
+    for attempt, item_row in session.execute(
+        select(_Attempt, _Item)
+        .join(_Item, _Attempt.item_id == _Item.id)
+        .order_by(_Attempt.id.desc())
+        .limit(limit)
+    ).all():
+        outcome = getattr(attempt.outcome, "value", attempt.outcome)
+        events.append((
+            attempt.finished_at or attempt.started_at,
+            "c-passed" if str(outcome) == "pr-open" else "c-idle",
+            f"{_h(where.get(item_row.project_id, '?'))} · attempted "
+            f"{_h(item_row.title[:48])} — {_h(str(outcome or 'still running'))}",
+        ))
+    for report in session.scalars(select(DependencyReport)).all():
+        events.append((
+            report.taken_at,
+            "c-idle" if report.asked else "c-refused",
+            f"{_h(where.get(report.project_id, '?'))} · "
+            + (
+                f"asked OSV about {report.pinned} pinned version(s), "
+                f"{len(report.findings or [])} with something published"
+                if report.asked
+                else "could not ask OSV"
+            ),
+        ))
+    if not events:
+        return ""
+    # **A thing that happened is a subject too** (DR-0028), so it is a row of the same table the
+    # other views use rather than a card with a paragraph in it.
+    rows = "".join(
+        f'<tr class="subject"><td class="who">'
+        f'<span class="dot {_h(colour.removeprefix("c-"))}"></span>'
+        f'<span class="said">{said}</span></td>'
+        f'<td class="fold"><time datetime="{_h(when)}" title="{_h(when)}">{_h(_ago(when))}'
+        f"</time></td></tr>"
+        for when, colour, said in sorted(events, key=lambda one: one[0], reverse=True)[:limit]
+    )
+    return _section(
+        "What it has been doing",
+        "Newest first, across every project.",
+        f'<table class="subjects narrow">{rows}</table>',
+    )
+
+
+def _what_it_says_it_is_doing(session: Session) -> str:
+    """The dispatcher's own sentence about what it is doing, or `""` when there is none. Item 242.
+
+    **Its word, not an inference.** Everything a page could deduce — the heartbeat, an attempt with
+    no `finished_at`, a verdict appearing — has the same hole in the middle: between two writes
+    there is nothing to read, and that gap is exactly the four minutes somebody is watching.
+
+    A stale heartbeat is not busy. A dispatcher killed mid-sentence leaves its last one behind, and
+    rendering that as *now* would be this page's own version of the defect it is fixing — so the
+    lease's own reading of itself decides, and a stale one says so instead.
+    """
+    from hullwork import lease as lease_module
+    from hullwork.models import DispatcherLease
+
+    row = session.get(DispatcherLease, 1)
+    state, when = lease_module.state(session)
+    if row is None or not row.doing:
+        # **Idle is a fact and being unreachable is a different one.** A door that renders nothing
+        # in both cases answers *is it running?* with silence, which is the question the operator
+        # opened it to ask.
+        if state == "alive":
+            return (
+                '<div class="band"><span class="chip c-idle">nothing running</span>'
+                # **`_ago` returns a phrase, not a duration**, and one of its answers is
+                # `just now` — which this rendered as *just now ago*, on the door, for anybody
+                # looking at an idle instance.
+                f'<p class="sub" style="margin:.7rem 0 0">The dispatcher answered '
+                f"{_h(_since(when))}.</p></div>"
+            )
+        if state in ("stale", "never"):
+            return (
+                '<div class="band"><span class="chip c-refused">no dispatcher</span>'
+                '<p class="sub" style="margin:.7rem 0 0">'
+                + (
+                    f"Nothing has claimed the lease since {_h(_since(when))}. "
+                    if state == "stale"
+                    else "No dispatcher has ever run against this instance. "
+                )
+                + "Nothing will be attempted or verified until one does.</p></div>"
+            )
+        return ""
+
+    if state != "alive":
+        return (
+            '<div class="band"><span class="chip c-refused">dispatcher not answering</span>'
+            f'<p class="sub" style="margin:.7rem 0 0">The last thing it said it was doing was '
+            f"<em>{_h(row.doing)}</em>, {_h(_since(row.doing_since))}. Its heartbeat has "
+            "stopped, so that is what it was doing rather than what it is doing.</p></div>"
+        )
+    return (
+        '<div class="band"><span class="chip c-working">working</span>'
+        f'<p style="margin:.7rem 0 0">{_h(row.doing)}</p>'
+        f'<p class="sub" style="margin:.2rem 0 0">for {_h(_ago(row.doing_since))}</p></div>'
+    )
+
+
 def _now(session: Session, prices: Prices | None) -> str:
     """The attempt in flight, or a sentence saying there is none.
 
@@ -1379,13 +2041,21 @@ def _now(session: Session, prices: Prices | None) -> str:
         else:
             outcome = getattr(last.outcome, "value", last.outcome)
             tail = (
-                f"The last one finished {_h(_ago(last.finished_at or last.started_at))} ago: "
+                f"The last one finished {_h(_since(last.finished_at or last.started_at))}: "
                 f"{_h(str(outcome))}."
             )
+        # **What the dispatcher says it is doing, before concluding it is doing nothing** (item
+        # 242). This band read `Item.state == IN_PROGRESS`, and a dependency verification is not an
+        # item — so it printed *nothing running* through five minutes of building an image and
+        # running somebody's suite twice. A page that reports calm during four minutes of work is
+        # not missing a feature; it is answering wrongly.
+        busy = _what_it_says_it_is_doing(session)
+        if busy:
+            return busy
         return (
             '<div class="band"><span class="chip c-idle">nothing running</span>'
             f'<p class="sub" style="margin:.7rem 0 0">{tail}'
-            + (f' {queued} item(s) are ready and waiting.' if queued else "")
+            + (f" {queued} item(s) are ready and waiting." if queued else "")
             + "</p></div>"
         )
 
@@ -1409,7 +2079,7 @@ def _now(session: Session, prices: Prices | None) -> str:
     cost = ""
     if attempt is not None:
         money = spend.cost_of(spend.tokens_of(attempt.seal), prices) if prices else None
-        parts = [f"started {_h(_ago(attempt.started_at))} ago"]
+        parts = [f"started {_h(_since(attempt.started_at))}"]
         if money is not None:
             parts.append(_h(str(money)))
         cost = f'<p class="sub" style="margin:.6rem 0 0">{" · ".join(parts)}</p>'
@@ -1468,7 +2138,11 @@ def _disagreements(session: Session, settings: Settings) -> str:
     if not found:
         return '<p class="settled">Nothing disagrees: the three checks ran and found nothing.</p>'
     rows = "".join(f'<li class="bad">{_h(line)}</li>' for line in found)
-    return f'<h2>What does not add up</h2><div class="band"><ul>{rows}</ul></div>'
+    return _section(
+        "What disagrees",
+        "Where two things this instance recorded cannot both be true.",
+        f'<div class="band"><ul>{rows}</ul></div>',
+    )
 
 
 def _violations_in(seal: object) -> bool:
@@ -1506,6 +2180,843 @@ def _as_code(said: str) -> str:
 def _titled(one: object) -> str:
     """A finding calls it `check` and a standing calls it `name`; both mean the same thing."""
     return str(getattr(one, "check", None) or getattr(one, "name", ""))
+
+
+def as_a_block(text: str) -> str:
+    """Text whose line breaks are the point, marked so `_outcome` keeps them. Item 223.
+
+    `_outcome` renders a sentence, and a sentence in a paragraph is right for every other answer on
+    this page. A proposed manifest is not a sentence: it is forty-one lines somebody copies.
+    """
+    return _BLOCK + text
+
+
+#: The marker, rather than a second parameter threaded through four routes for one caller.
+_BLOCK = "\x00block\x00"
+
+
+def _outcome(said: str | None) -> str:
+    """What the last action answered, verbatim. Item 219.
+
+    **Every refusal in this product already carries its own sentence**, so this renders whatever it
+    was given rather than composing one. A page that replaced *`--give-up` needs `--why`* with
+    *something went wrong* would be throwing away the only part worth reading.
+    """
+    if not said:
+        return ""
+    if said.startswith(_BLOCK):
+        return f'<pre class="wide outcome"><code>{_h(said[len(_BLOCK):])}</code></pre>'
+    return f'<p class="sub outcome">{_as_code(said)}</p>'
+
+
+def what_this_can_do(session: Session, project: _Project, settings: Settings) -> str:
+    """`hullwork features`, for the project a reader is looking at. Item 220, item 218 §2.
+
+    The command answers for the checkout it is run in; a page serves an instance that may watch
+    somebody else's repositories entirely, so the answer has to be per project. The manifest is the
+    instance's own copy (DR-0012) and the variable names are this process's.
+
+    **Unmet means three different things here and only one is a defect**, which is what `Need.reads`
+    names. A checkout-shaped requirement cannot be answered at all — item 142 forbids a forge
+    request per render — so it says *not asked yet* rather than *no*, the same answer the credential
+    audit gives one section up. And a credential the dispatcher owns is downgraded exactly as
+    `doctor.not_from_here` downgrades it, because reporting the model key missing on an instance
+    where the half that uses it holds it sends somebody to repair a working machine.
+    """
+    from hullwork import features as features_module
+    from hullwork.manifest import parse_manifest
+
+    manifest = None
+    if project.manifest:
+        try:
+            manifest = parse_manifest(json.dumps(project.manifest))
+        except Exception:  # a stored manifest that no longer parses is `projects refresh`'s to say
+            manifest = None
+    checkout = features_module.Checkout(
+        paths=(),
+        manifest=manifest,
+        configured=frozenset(_configured_here(settings)),
+    )
+    elsewhere = _the_dispatchers_to_answer(session)
+
+    rows = []
+    for answer in features_module.examine(checkout):
+        rows.append(_one_feature(answer, elsewhere=elsewhere))
+    return _fold(
+        f"What Hullwork can do for {project.slug}, and what it cannot",
+        f'<ul class="standing">{"".join(rows)}</ul>',
+    )
+
+
+def _configured_here(settings: Settings) -> list[str]:
+    """The **names** of the variables this process received, never their values.
+
+    `Checkout.configured` is names only by design — that is what lets this say *needs a model
+    credential, and none is configured* without ever holding one.
+    """
+    from hullwork.features import CODE_TOKEN, MODEL_KEY
+
+    here = []
+    if settings.model_key is not None:
+        here.append(MODEL_KEY)
+    if settings.forge_code_token is not None:
+        here.append(CODE_TOKEN)
+    return here
+
+
+def _the_dispatchers_to_answer(session: Session) -> bool:
+    """Whether a dispatcher is alive, which is the only thing that licenses a downgrade.
+
+    `doctor.not_from_here`'s rule, not a second one: ownership rather than location. With no
+    dispatcher alive nothing is downgraded — the absence of one is exactly when somebody needs to
+    know what is missing.
+    """
+    from hullwork import lease as lease_module
+
+    try:
+        state, _ = lease_module.state(session)
+    except Exception:  # any failure here means "cannot tell", whatever its class
+        return False
+    return state == "alive"
+
+
+def _one_feature(answer: object, *, elsewhere: bool) -> str:
+    """One feature, its state, what is in the way, and its limits — which are printed either way.
+
+    **A limit is true whether or not the feature is available.** Rendering them only for what is off
+    would turn them into excuses instead of the description they are.
+    """
+    feature = answer.feature  # type: ignore[attr-defined]
+    missing = list(answer.missing) + list(answer.withheld)  # type: ignore[attr-defined]
+    unanswerable = [need for need in missing if need.reads == "checkout"]
+    theirs = [need for need in missing if need.reads == "instance"] if elsewhere else []
+    real = [need for need in missing if need not in unanswerable and need not in theirs]
+
+    if real:
+        word, tone = "no", "refused"
+    elif theirs or unanswerable:
+        word, tone = "not from here" if theirs else "not asked yet", "idle"
+    else:
+        word, tone = "yes", "idle"
+
+    said = [
+        f'<li class="c-{tone}"><span class="pill">{_h(word)}</span>'
+        f'<span class="name">{_h(feature.name)}</span>'
+        f'<p class="why">{_as_code(feature.does)}</p>'
+    ]
+    for need in real:
+        said.append(f'<p class="why">needs {_as_code(need.what)} — {_as_code(need.fix)}</p>')
+    for need in theirs:
+        said.append(
+            f'<p class="why">{_as_code(need.what)}: not from here — a dispatcher is running and '
+            f"this is a resource it uses, not one this process does.</p>"
+        )
+    for need in unanswerable:
+        said.append(
+            f'<p class="why">{_as_code(need.what)}: not asked yet — nothing on this instance '
+            f"reads your tree, and a page render does not spend a forge request to find out. "
+            f"{_as_code('`hullwork features --checkout .`')} answers it where the code is.</p>"
+        )
+    for limit in feature.limits:
+        said.append(f'<p class="why limit">{_as_code(limit)}</p>')
+    said.append("</li>")
+    return "".join(said)
+
+
+def _why_it_is_empty(session: Session) -> str:
+    """Why there are no items, from the table that knows. Item 231.
+
+    **The old sentence was a guess.** *Nothing has arrived from the error tracker on this instance*
+    was written before anything asked, and it is one of three states an empty list is consistent
+    with — the other two being *things arrived carrying no error* and *things arrived and could not
+    be understood*, which have different causes and different fixes.
+    """
+    from hullwork.models import Delivery
+
+    arrived = session.scalar(select(func.count()).select_from(Delivery)) or 0
+    if not arrived:
+        return (
+            "No items yet, and no delivery has ever been accepted. A call with the wrong secret is "
+            "refused before anything is written down, so this says none arrived with a working "
+            "secret rather than that nobody knocked"
+        )
+    unread = (
+        session.scalar(
+            select(func.count()).select_from(Delivery).where(Delivery.error.is_not(None))
+        )
+        or 0
+    )
+    if unread:
+        return (
+            f"No items yet. {arrived} delivery(s) arrived and {unread} could not be understood — "
+            f"each carries its own reason on its project"
+        )
+    return (
+        f"No items yet. {arrived} delivery(s) arrived and none of them carried an error, which is "
+        f"a tracker sending something that is not one"
+    )
+
+
+def what_arrived_for(session: Session, project: _Project) -> str:
+    """What the tracker actually sent, and what became of it. Item 231.
+
+    **The page kept saying `nothing has arrived` without asking.** Three states are consistent with
+    an empty front door — nothing arrived, things arrived carrying no error, things arrived and
+    could not be understood — and only the first is what that sentence claims.
+
+    **A refused secret leaves no row.** `webhooks.py` answers `401` before anything is written, so
+    an empty list here means nobody knocked *with a working secret*, and saying more than that would
+    be the same lie as an advisory list rendered empty after a failed request.
+
+    No body and no hash: this table keeps payloads verbatim, and a page whose whole audience is
+    people who are not the operator has no business rendering somebody else's error payload.
+    """
+    from hullwork.models import Delivery, Event
+
+    rows = list(
+        session.scalars(
+            select(Delivery)
+            .where(Delivery.project_id == project.id)
+            .order_by(Delivery.received_at.desc())
+            .limit(20)
+        ).all()
+    )
+    total = session.scalar(
+        select(func.count()).select_from(Delivery).where(Delivery.project_id == project.id)
+    ) or 0
+    if not rows:
+        return (
+            "<p>No delivery has ever been accepted for this project. That is not the same as "
+            "nobody having knocked: a call with the wrong secret is refused before anything is "
+            "written down, so this list can only say that none arrived <strong>with a working "
+            "secret</strong>. The rejection is in this instance's log.</p>"
+        )
+
+    counted = session.execute(
+        select(Event.delivery_id, func.count())
+        .where(Event.delivery_id.in_([one.id for one in rows]))
+        .group_by(Event.delivery_id)
+    ).all()
+    facts: dict[int, int] = dict(counted)  # type: ignore[arg-type]
+    listed = "".join(
+        '<tr><td data-label="arrived">'
+        f'<time datetime="{_h(one.received_at)}" title="{_h(one.received_at)}">'
+        f"{_h(_ago(one.received_at))}</time></td>"
+        f'<td data-label="understood">'
+        + (
+            f'<span class="stuck">{_h(one.error[:80])}</span>'
+            if one.error
+            else ("yes" if one.processed_at else "not yet")
+        )
+        + f'</td><td data-label="facts in it">{_h(facts.get(one.id, 0))}</td>'
+        f'<td data-label="tries">{_h(one.attempts)}</td></tr>'
+        for one in rows
+    )
+    carried = sum(facts.values())
+    return (
+        f'<p class="sub">{total} delivery(s) accepted, carrying {carried} fact(s).</p>'
+        '<div class="wide"><table class="list"><tr><th>arrived</th><th>understood</th>'
+        f"<th>facts in it</th><th>tries</th></tr>{listed}</table></div>"
+        '<p class="sub">A delivery carrying no fact is a tracker sending something that is not an '
+        "error, which is ordinary. One that was never understood carries its own reason.</p>"
+    )
+
+
+#: What each verdict means **in the reader's terms**, and the colour it is allowed to wear.
+#:
+#: **Four states that do not collapse into two** (DR-0026). `clean` is *your suite passed before and
+#: after* and not *this is safe*. `will-not-install` is the build refusing, which is a different
+#: fact from the suite failing — painting it red would be this product telling somebody their code
+#: is broken when what broke was an install. `already-red` is a suite that was failing before
+#: anything was touched, so no claim can be made either way, and the colour says *this needs a
+#: person* rather than *this is bad news*.
+_WHAT_IT_MEANT: dict[str, tuple[str, str]] = {
+    "clean": ("your suite passed, before and after", "c-passed"),
+    "breaks": ("your suite fails on it", "c-refused"),
+    "will-not-install": ("the build refused it, so your suite never ran", "c-idle"),
+    "already-red": ("your suite was already failing, so nothing can be claimed", "c-human"),
+    "cannot-rewrite": ("the pin could not be rewritten without breaking the install", "c-idle"),
+    "cannot-move": ("the pin could not be moved to it", "c-idle"),
+}
+
+
+def _may_open_upgrades(project: _Project) -> bool:
+    """Whether this project's manifest permits opening an upgrade. DR-0019, item 245.
+
+    Read from the copy the instance holds, which is the copy every other decision reads (DR-0012).
+    A project that declares nothing permits nothing: `open_upgrades` is `false` by default because
+    having the credential is not the same as having agreed.
+    """
+    manifest = getattr(project, "manifest", None)
+    if not isinstance(manifest, Mapping):
+        return False
+    autofix = manifest.get("autofix")
+    return bool(isinstance(autofix, Mapping) and autofix.get("open_upgrades"))
+
+
+#: The states a pinned package can be in, in the order a reader can act on them. DR-0028.
+#:
+#: **The order is the grouping.** A reader opens this view to find out what to do, so what can be
+#: done comes first and what nobody can do comes last — never the order the report happens to list.
+#: The sentence beside each state is said **once**, in the heading: a column repeating the same
+#: sentence twenty-seven times is a column that should not exist, which is the fault the first
+#: prototype of this decision found in itself.
+_BANDS: tuple[tuple[str, str, str, str], ...] = (
+    ("ready", "Ready to open", "passed your suite before the change and after it", "passed"),
+    ("asked", "Opening", "asked for — the dispatcher opens it on its next turn", "human"),
+    ("open", "Already open", "a draft pull request is waiting for a person", "working"),
+    # **The two the forge answers, which nothing used to ask** (item 253). Without them a merged
+    # pull request sat in the band above asking for a review that had already happened, and a
+    # closed one sat there for ever displaying somebody's "no" as work they still owed.
+    ("merged", "Merged",
+     "the pull request was merged; the advisory goes when the next report is taken", "passed"),
+    ("declined", "You closed these",
+     "opened, and closed by a person without merging — each row says what they gave as the reason",
+     "refused"),
+    # **The one band whose reason is per row rather than per group** (item 178's rule, kept): a
+    # request that produced nothing is either already open from an earlier run or something the
+    # forge refused, and those are different sentences. Never silence — a row that was asked for
+    # and shows neither outcome is a row somebody presses again.
+    ("refused", "Asked for, and not opened", "each row says what stopped it", "refused"),
+    ("breaks", "Breaks your suite", "the upgrade applied and your tests stopped passing",
+     "refused"),
+    ("install", "Would not install", "the build refused it, so your suite never ran", "faint"),
+    ("stuck", "The pin would not move",
+     "the resolver refused the version, or your manifest forbids it", "faint"),
+    ("stale", "Verified before this instance kept the files",
+     "passed your suite before the change and after it, and is re-measured on the next report "
+     "so it can be opened", "faint"),
+    # **Item 234, as a band.** The honest answer about a project whose own test suite was already
+    # failing is *nothing can be claimed either way*, and it is about the project rather than about
+    # any upgrade — so it is said once, in this heading, and the packages it covers are still named.
+    # Rendering it per row is what produced fifty identical lines in an hour.
+    ("baseline", "Nothing could be claimed",
+     "this project's own test suite was already failing before anything was touched", "human"),
+    ("untried", "Not tried yet", "the queue reaches one per idle turn", "faint"),
+    ("nofix", "Nothing published to upgrade to",
+     "an advisory with no fixed version — a person decides", "refused"),
+)
+
+#: Which state wins when one package is pinned at versions in different states: **the one that most
+#: needs a person**. A row is a place to act, and a reader scanning for what to do must not have a
+#: package hidden under its quietest version.
+_BAND_RANK: dict[str, int] = {key: n for n, (key, _, _, _) in enumerate(_BANDS)}
+
+#: The states whose row has a pull request behind it. `open` invites a review; the other two are
+#: evidence of one that happened, and both are worth a click (item 253).
+_CARRY_A_LINK = ("open", "merged", "declined")
+
+
+def _state_of(verdicts: Sequence[Any], fixed: Sequence[str]) -> tuple[str, str | None, str | None]:
+    """The state of one pinned version, what it would move to, and where its pull request went.
+
+    Every rule the two lists this replaces had encoded, now in one place:
+
+    * a build refusing is **not** a broken suite — `will-not-install` is its own state (item 233);
+    * `already-red` claims nothing either way and is said about the **project**, so it never reaches
+      a row (item 234);
+    * a `clean` verdict with nothing kept cannot be opened and says so, rather than offering a
+      control the write path would refuse (item 245);
+    * an outcome this page does not recognise falls through to `stuck`, which says *the pin would
+      not move* — and the verdict itself is still rendered in the row, so nothing is swallowed.
+    """
+    # **What the forge last said, before what this instance did** (item 253). `opened_where` alone
+    # meant *waiting for a person* for ever: a merged pull request kept asking for a review that had
+    # happened, and one a person closed without merging displayed their "no" as work they owed.
+    # Both are terminal and neither is *open*, so both are read first.
+    settled = [v for v in verdicts if getattr(v, "opened_state", None) in ("merged", "closed")]
+    if settled:
+        one = settled[0]
+        where = str(one.opened_where) if one.opened_where else None
+        return ("merged" if one.opened_state == "merged" else "declined"), str(one.to), where
+    opened = [v for v in verdicts if getattr(v, "opened_where", None)]
+    if opened:
+        return "open", str(opened[0].to), str(opened[0].opened_where)
+    refused = [v for v in verdicts if getattr(v, "open_note", None)]
+    if refused:
+        return "refused", str(refused[0].to), None
+    asked = [v for v in verdicts if getattr(v, "asked_to_open_at", None) is not None]
+    if asked:
+        return "asked", str(asked[0].to), None
+    clean = [v for v in verdicts if v.outcome == "clean"]
+    openable = [v for v in clean if getattr(v, "artefact", None)]
+    if openable:
+        return "ready", str(openable[0].to), None
+    if clean:
+        return "stale", str(clean[0].to), None
+    breaks = [v for v in verdicts if v.outcome == "breaks"]
+    if breaks:
+        return "breaks", str(breaks[0].to), None
+    refused = [v for v in verdicts if v.outcome == "will-not-install"]
+    if refused:
+        return "install", str(refused[0].to), None
+    if not fixed:
+        return "nofix", None, None
+    moved = [v for v in verdicts if v.outcome in ("cannot-move", "cannot-rewrite")]
+    if moved:
+        return "stuck", str(moved[0].to), None
+    unknown = [v for v in verdicts if v.outcome != "already-red"]
+    if unknown:
+        # **A verdict `bump` adds tomorrow must not vanish because this table was not updated.** An
+        # unknown state is still a state, and rendering nothing would report *not tried yet*, which
+        # is the one thing it is not. The outcome goes in the row, in its own words.
+        return "stuck", str(unknown[0].to), f"it ended as {unknown[0].outcome}"
+    if verdicts:
+        return "baseline", str(verdicts[0].to), None
+    return "untried", str(fixed[0]), None
+
+
+def _packages_of(
+    session: Session, project: _Project, findings: Sequence[Mapping[str, Any]]
+) -> tuple[list[dict[str, Any]], int]:
+    """One row per package, and how many pairs said the project's own suite was already failing.
+
+    **The package is the subject** (DR-0028). `brace-expansion` pinned at three versions in one lock
+    is one row carrying three versions, not three rows that share a name — and the report itself
+    hands the same `(package, version)` twice, which this collapses on the way in.
+    """
+    from hullwork.models import UpgradeVerdict
+
+    held = {
+        (one.package, one.was, one.to): one
+        for one in session.query(UpgradeVerdict)
+        .filter(UpgradeVerdict.project_id == project.id)
+        .all()
+    }
+    rows: dict[str, dict[str, Any]] = {}
+    already_red = 0
+    for finding in findings:
+        package = str(finding.get("package") or "")
+        was = str(finding.get("version") or "")
+        source = str(finding.get("source") or "")
+        raw = finding.get("advisories")
+        advisories = raw if isinstance(raw, list) else []
+        # De-duplicated for the reason two identifiers are one advisory: *fixed in 49.0.0, 49.0.0,
+        # 50.0.0* is a list that has been counted wrong.
+        fixed = list(
+            dict.fromkeys(
+                str(version) for one in advisories for version in (one.get("fixed") or [])
+            )
+        )
+        mine = [held[(package, was, to)] for to in fixed if (package, was, to) in held]
+        already_red += sum(1 for one in mine if one.outcome == "already-red")
+        state, to, said = _state_of(mine, fixed)
+        # A merged or closed pull request still has somewhere to go, and that is where the reader
+        # goes to see what happened (item 253) — the link is the evidence, not the invitation.
+        where = said if state in _CARRY_A_LINK else None
+        row = rows.setdefault(package, {
+            "package": package, "sources": [], "pinned": [], "to": [], "states": [],
+            "advisories": [], "where": None, "verdict": None, "note": None,
+        })
+        if source and source not in row["sources"]:
+            row["sources"].append(source)
+        # **Every published destination, not only the one whose verdict won the row.** OSV publishes
+        # two fixed versions when an advisory was fixed on two release branches, and they are two
+        # answers; showing the winner's alone loses one of them from the page.
+        # **Two sets, never their product.** Pairing every pinned version with every published
+        # destination is a cartesian explosion the moment a package is pinned three times and fixed
+        # on four branches: `brace-expansion` rendered its version thirty times and stretched the
+        # table to 7,208px. What a reader needs is *these versions are pinned, and they move here*.
+        #
+        # The pinned version is kept even when there is nowhere to move it: the one row nobody can
+        # act on was also the one rendering an empty span where its version should be.
+        if was and was not in row["pinned"]:
+            row["pinned"].append(was)
+        for destination in fixed or ([to] if to else []):
+            if destination and destination not in row["to"]:
+                row["to"].append(destination)
+        row["states"].append(state)
+        row["where"] = row["where"] or where
+        if not row.get("note"):
+            if state in ("refused", "declined"):
+                # `declined` keeps its reason on the same column `refused` does: the reviewer's
+                # words, or the fact that they gave none. Item 178's rule, item 253's state.
+                row["note"] = next(
+                    (str(one.open_note) for one in mine if getattr(one, "open_note", None)), None
+                )
+            elif state not in _CARRY_A_LINK and said:
+                row["note"] = said
+        for one in advisories:
+            if one.get("id") not in {seen.get("id") for seen in row["advisories"]}:
+                row["advisories"].append(one)
+        if state == "ready" and row["verdict"] is None:
+            openable = [
+                one for one in mine
+                if one.outcome == "clean" and getattr(one, "artefact", None)
+                and not one.opened_where and one.asked_to_open_at is None
+            ]
+            row["verdict"] = openable[0].id if openable else None
+
+    ordered = []
+    for row in rows.values():
+        row["state"] = min(row["states"], key=lambda s: _BAND_RANK[s])
+        ordered.append(row)
+    ordered.sort(key=lambda r: r["package"])
+    return ordered, already_red
+
+
+def _subject(row: Mapping[str, Any], colour: str, *, project: _Project, acting: Acting,
+             permitted: bool) -> str:
+    """One package, one row: what it is, where, what it would move to, and the one thing to do."""
+    # Both sides are capped for the same reason: a row is scanned, and the enumeration is what the
+    # fold and the project's own lock file are for.
+    pinned = [_h(one) for one in row["pinned"][:2]]
+    if len(row["pinned"]) > 2:
+        pinned.append(f"+{len(row['pinned']) - 2}")
+    froms = " · ".join(pinned)
+    # **Three destinations and a count, not eleven.** OSV publishes a fixed version per release
+    # branch, so a package pinned across a major version can land in a dozen places — and a reader
+    # deciding whether to look needs *there is somewhere to go*, not the enumeration.
+    landings = [_h(one) for one in row["to"][:2]]
+    rest = len(row["to"]) - len(landings)
+    if rest > 0:
+        landings.append(f"+{rest}")
+    move = (
+        f'<span class="was">{froms}</span><span class="arr">→</span>'
+        f'<span class="to">{" · ".join(landings)}</span>'
+        if landings
+        else f'<span class="was">{froms}</span>'
+    )
+    says = "".join(
+        f'<li><a href="https://osv.dev/vulnerability/{_h(one.get("id"))}" rel="noreferrer">'
+        f'{_h(one.get("id"))}</a> {_h(one.get("summary") or "")}</li>'
+        for one in row["advisories"][:8]
+    )
+    rest = len(row["advisories"]) - 8
+    if rest > 0:
+        says += f'<li class="more">and {rest} more</li>'
+    fold = (
+        f'<details class="adv"><summary>{len(row["advisories"])}</summary>'
+        f'<ul class="folded">{says}</ul></details>'
+        if row["advisories"] else ""
+    )
+    # **The one thing a row says in prose**, because each refusal differs: *already open from an
+    # earlier run* and *the forge refused it* are not the same sentence, so this cannot move to a
+    # heading the way every other state's explanation did.
+    note = (
+        f'<span class="note">{_h(row["note"])}</span>' if row.get("note") else ""
+    )
+    return (
+        f'<tr class="subject">'
+        f'<td class="who"><span class="dot {_h(colour)}"></span>'
+        f'<span class="thing">{_h(row["package"])}</span>{move}{note}</td>'
+        f'<td class="at">{_h(" · ".join(row["sources"]))}</td>'
+        f'<td class="fold">{fold}</td>'
+        f'<td class="do">'
+        f"{_action_for(row, project=project, acting=acting, permitted=permitted)}</td>"
+        f"</tr>"
+    )
+
+
+def _action_for(row: Mapping[str, Any], *, project: _Project, acting: Acting,
+                permitted: bool) -> str:
+    """The one control this row has, or nothing at all.
+
+    **No column of empty cells** (DR-0028): the action column was empty in twenty-five rows out of
+    twenty-six, paying width to say nothing. It renders where it exists and the cell collapses
+    everywhere else.
+    """
+    if row["state"] in _CARRY_A_LINK and row["where"]:
+        return (
+            f'<a href="{_h(row["where"])}" rel="noreferrer">'
+            f'#{_h(str(row["where"]).rsplit("/", 1)[-1])} ↗</a>'
+        )
+    if row["state"] != "ready" or not permitted or not acting.csrf or not row["verdict"]:
+        return ""
+    csrf = f'<input type="hidden" name="csrf" value="{_h(acting.csrf)}">'
+    return (
+        # **`dependencies`, which is the URL this view is served from** (item 250). It posted to
+        # `../<slug>` and the handler answered with this view — a document written for
+        # `projects/<slug>/dependencies`, carrying `../../`, returned from one level up. Every link
+        # on the page that came back resolved outside the token's prefix entirely.
+        f'<form method="post" action="dependencies" class="decide">{csrf}'
+        f'<input type="hidden" name="verdict" value="{int(row["verdict"])}">'
+        '<button type="submit" name="action" value="open-upgrade">Open a draft PR</button></form>'
+    )
+
+
+def _the_packages(
+    session: Session,
+    project: _Project,
+    findings: Sequence[Mapping[str, Any]],
+    *,
+    acting: Acting,
+) -> str:
+    """Every package with something published against it, grouped by what can be done. DR-0028."""
+    rows, already_red = _packages_of(session, project, findings)
+    if not rows:
+        return ""
+    permitted = _may_open_upgrades(project)
+    bands, tally = [], []
+    for key, title, says, colour in _BANDS:
+        here = [row for row in rows if row["state"] == key]
+        if not here:
+            continue
+        tally.append(
+            f'<span class="one"><span class="dot {colour}"></span>'
+            f'<b>{len(here)}</b> {_h(title.lower())}</span>'
+        )
+        lines = "".join(
+            _subject(row, colour, project=project, acting=acting, permitted=permitted)
+            for row in here
+        )
+        bands.append(
+            f'<section class="band"><h3><span>{_h(title)}</span>'
+            f'<em>{_h(says)}</em><b>{len(here)}</b></h3>'
+            f'<table class="subjects">{lines}</table></section>'
+        )
+    ready = sum(1 for row in rows if row["state"] == "ready")
+    return (
+        f'<p class="tally">{"".join(tally)}</p>{"".join(bands)}'
+        f"{_baseline_note(already_red, rows)}"
+        f"{_about_opening(ready, permitted=permitted, acting=acting)}"
+        # **Said once, at the end, and it is not decoration**: the claim this half of the product
+        # rests on is that nothing here happens on a clock. DR-0026 is the decision; this is where a
+        # reader who never opens a decision record finds out.
+        '<p class="sub">Each upgrade was applied in a clone, built, and measured against this '
+        "project's own suite. This instance verifies on its own clock and <strong>never opens one "
+        "by itself</strong> — what gets opened, a person asks for, and nobody merges it but "
+        "you.</p>"
+    )
+
+
+def _baseline_note(already_red: int, rows: Sequence[Mapping[str, Any]]) -> str:
+    """How many pairs the red-baseline band covers, said once. Item 234.
+
+    **About the project, not about the upgrade.** A repository whose own tests are red gives one
+    answer to every pair in the queue, and rendering it per row buries whatever else is there —
+    which is why the sentence lives in that band's heading. This adds only the arithmetic the
+    heading cannot carry: a band lists *packages*, and the queue answered *pairs*.
+    """
+    if not already_red or not any(row["state"] == "baseline" for row in rows):
+        return ""
+    return (
+        f'<p class="sub c-human">That covers {already_red} upgrade(s), measured once and asked '
+        f"again when the next dependency report is taken.</p>"
+    )
+
+
+def _about_opening(ready: int, *, permitted: bool, acting: Acting) -> str:
+    """What a reader can do with what passed, or why they cannot. Item 245, DR-0019.
+
+    **The count goes in front of the refusal**, which is the order the terminal uses and the reason
+    it reads as a decision rather than as a part that is missing.
+    """
+    if not ready:
+        return ""
+    if not acting.csrf:
+        return (
+            f'<p class="sub">{ready} of these can be opened as draft pull requests. Signing in is '
+            f"what offers the control.</p>"
+        )
+    if not permitted:
+        return (
+            f'<p class="sub c-human">{ready} passed your suite and <strong>none can be '
+            f"opened</strong>: this project has not permitted it. Set "
+            f"<code>autofix: {{open_upgrades: true}}</code> in its manifest if you want that "
+            f"button. It is false by default because having the credential is not the same as "
+            f"having agreed.</p>"
+        )
+    return ""
+
+
+def what_is_published_against_it(
+    session: Session, project: _Project, *, acting: Acting = READING
+) -> str:
+    """What OSV had published against what this project pins, and when that was asked. DR-0024.
+
+    **The half an evaluator can use on their first day**, which until item 230 left no trace in a
+    running instance at all: `hullwork deps` opened no session, stored nothing, and could not run
+    inside the container.
+
+    Three states and they are not two. *Nothing published* is good news; *nothing pinned* is a
+    different sentence about a different problem; and **could not ask** is neither — an advisory
+    list that silently reads empty when OSV was unreachable says *you are fine* on no evidence, and
+    is the failure this feature must not have.
+
+    **No longer folded** (item 235, DR-0027). This is a feature, and a feature one click away is
+    what made this page difficult three times running: it returns the block, and the page it belongs
+    to decides where the block goes.
+    """
+    from hullwork.models import DependencyReport
+
+    report = session.get(DependencyReport, project.id)
+    if report is None:
+        return (
+            "<p>Not asked yet. This instance reads what you pin and asks OSV on its own clock, "
+            "within six hours of a project being connected.</p>"
+        )
+
+    when = f'<p class="sub">Asked {_h(_ago(report.taken_at))}.</p>'
+    if not report.asked:
+        return (
+            f'<p class="bad">Could not ask: '
+            f'{_as_code(report.note or "the reason was not recorded")}</p>{when}'
+            "<p>This is not an empty report. Nothing here says your dependencies are fine; it "
+            "says the question did not reach an answer.</p>"
+        )
+    if not report.pinned:
+        return f'<p>Nothing pins a version. {_as_code(report.note or "")}</p>{when}'
+    if not report.findings:
+        return (
+            f"<p>OSV has nothing published against any of the {report.pinned} pinned version(s) "
+            f"this repository declares.</p>{when}"
+            '<p class="sub">It reads what you pinned, so a dependency your build resolves at '
+            "install time is invisible to it — and it asks one database.</p>"
+        )
+    # **One list, not two** (DR-0028). What OSV publishes about a package and what this instance did
+    # about it were two sections six screens apart, so the questions a reader asks — what is
+    # wrong with this one, was it tried, what happened, can I do anything — were answered in two
+    # places that had to be joined from memory.
+    packages, _ = _packages_of(session, project, report.findings)
+    return (
+        f'<p class="sub">{report.pinned} versions pinned · {len(packages)} package(s) with '
+        f"something published · asked {_h(_ago(report.taken_at))}.</p>"
+        f"{_the_packages(session, project, report.findings, acting=acting)}"
+    )
+
+
+def _the_rest_of_its_life(project: _Project, acting: Acting) -> str:
+    """The four things item 207 built routes for and buttons for nothing. Item 223.
+
+    **Every one of them was reachable only by `curl`.** The route took `refresh`, `disable`,
+    `set-tracker` and `rotate-secret`; the tests posted straight at it, which is a fair test of a
+    route and no test at all of a page. An operator on this view could do none of it.
+
+    Rotating is separated from the other three and says what it breaks **before** it is pressed: the
+    tracker's current webhook URL stops working the moment it succeeds, and the new secret is shown
+    once.
+    """
+    if not acting.csrf:
+        return ""
+    csrf = f'<input type="hidden" name="csrf" value="{_h(acting.csrf)}">'
+    # **`settings`, which is the URL this view is served from** (items 249 and 250). Item 249 found
+    # these posting to `../projects/<slug>` — `projects/projects/<slug>`, a route that does not
+    # exist, so all five controls posted into a 404 — and corrected them to `../<slug>`. That was
+    # the minimum: a route that exists. This is the right one, because the answer to a press is
+    # served at the URL it posted to, and the document for that URL is this view. `../<slug>`
+    # answered with the project's overview and bounced a reader out of settings after every action.
+    where = "settings"
+    tracker = _h(project.tracker_project or "")
+    return (
+        f'<form method="post" action="{where}" class="decide">{csrf}'
+        '<button type="submit" name="action" value="refresh">Re-read its manifest</button>'
+        + "</form>"
+        + (
+            # Two submissions, like `prune`: the first says what stopping means, the second does
+            # it. And a disabled project is offered the way back rather than the way out.
+            f'<form method="post" action="{where}" class="decide">{csrf}'
+            '<button type="submit" name="action" value="disable-preview">'
+            "What stopping it means</button>"
+            '<button type="submit" name="action" value="disable">Stop watching it</button></form>'
+            if project.active
+            else f'<p class="sub">Not watched. No error from it becomes an item and the sweep '
+            "skips it; nothing was deleted.</p>"
+            f'<form method="post" action="{where}" class="decide">{csrf}'
+            '<button type="submit" name="action" value="enable">Watch it again</button></form>'
+        )
+        + f'<form method="post" action="{where}" class="new">{csrf}'
+        '<p class="field"><label for="tracker-name">Its name in the tracker</label>'
+        f'<input id="tracker-name" name="tracker_project" value="{tracker}"></p>'
+        '<button type="submit" name="action" value="set-tracker">Name it</button></form>'
+        '<p class="sub">Rotating the webhook secret <strong>stops the URL your tracker is using '
+        "now</strong>, and the new one is shown once and never again — only its hash is kept.</p>"
+        f'<form method="post" action="{where}" class="decide">{csrf}'
+        '<button type="submit" name="action" value="rotate-secret">Issue a new secret</button>'
+        "</form>"
+    )
+
+
+def _sweeping(project: _Project, acting: Acting) -> str:
+    """The tracker's unresolved list, for a project the webhook cannot have told the whole truth
+    about. DR-0011, item 219.
+
+    **Counted before it is filed, and the count is what you confirm.** The webhook fires when an
+    issue is created and never again, so a bug that was already failing when Hullwork was installed
+    never arrives by that door. Sweeping is how it does — and a project with three hundred open
+    issues becomes three hundred forge issues in one pass unless somebody sees the number first.
+    """
+    if not acting.csrf or not project.tracker_project:
+        return ""
+    csrf = f'<input type="hidden" name="csrf" value="{_h(acting.csrf)}">'
+    return (
+        # **`settings`, the URL this view is served from** (items 249, 250). It posted to
+        # `../projects/<slug>` — `projects/projects/<slug>`, which is not a route, so every control
+        # in this section was dead — and then to `../<slug>`, which exists but is a different view.
+        f'<form method="post" action="settings" class="decide">{csrf}'
+        '<button type="submit" name="action" value="sweep">What the tracker still has</button>'
+        '<button type="submit" name="action" value="sweep-confirm">File them</button></form>'
+    )
+
+
+def _reading_the_repository(project: _Project, acting: Acting) -> str:
+    """The two answers that come from the repository itself, on request. Item 222.
+
+    **Each spends one forge read, and only when somebody presses it.** Item 142's rule is about a
+    *render* — a reader refreshing would spend one each time — and these are actions, the same shape
+    `projects refresh` has had since item 206. Reading that rule as a ban on both was mine, and it
+    parked two commands behind a decision they never needed.
+
+    Neither stores anything. The lane policy especially: a derived policy kept on disk would be a
+    snapshot of *which code is dangerous*, and `territory.py` says why that fails in the direction
+    that matters.
+    """
+    if not acting.csrf:
+        return ""
+    csrf = f'<input type="hidden" name="csrf" value="{_h(acting.csrf)}">'
+    return (
+        # **`settings`, the URL this view is served from** (items 249, 250). Same two corrections as
+        # the block above: first to a route that exists, then to the one this view is.
+        f'<form method="post" action="settings" class="decide">{csrf}'
+        '<button type="submit" name="action" value="lanes">Which files keep a human on</button>'
+        '<button type="submit" name="action" value="propose">Read a manifest from its CI</button>'
+        "</form>"
+    )
+
+
+def _housekeeping(session: Session, acting: Acting) -> str:
+    """The instance's own upkeep: the lease, and the only destructive control on this page.
+
+    Folded, because none of it is what somebody came for — item 203's rule about what is above a
+    fold and what is below one. Shown to nobody without a session (DR-0021).
+    """
+    if not acting.csrf:
+        return ""
+    from hullwork import lease as lease_module
+
+    holder = lease_module.holder_of(session)
+    who = (
+        f"Held by <code>{_h(holder)}</code>."
+        if holder
+        else "No dispatcher holds it."
+    )
+    csrf = f'<input type="hidden" name="csrf" value="{_h(acting.csrf)}">'
+    body = (
+        f"<p>{who} Releasing it means the next dispatcher does not wait for the expiry.</p>"
+        f'<form method="post" action="instance" class="decide">{csrf}'
+        '<input type="hidden" name="action" value="lease-release">'
+        "<button type=\"submit\">Release the lease</button></form>"
+        '<p class="sub">Verdicts the dispatcher reached and could not send are finished by '
+        "publishing them again. The attempt is already spent either way.</p>"
+        f'<form method="post" action="instance" class="decide">{csrf}'
+        '<input type="hidden" name="action" value="republish">'
+        "<button type=\"submit\">Publish what is stranded</button></form>"
+        "<p>The read link is a shared key: anyone holding it reads every item and captured "
+        "output here. Issuing a new one <strong>stops the URL anybody is using now</strong>, "
+        "which is what you press it for — and the new one is shown once.</p>"
+        f'<form method="post" action="instance" class="decide">{csrf}'
+        '<input type="hidden" name="action" value="page-token">'
+        '<button type="submit">Issue a new read link</button></form>'
+        "<p>Forgetting the verbatim bodies of old deliveries keeps every row, fingerprint and "
+        "issue reference. It is the only thing on this page that destroys anything, so it "
+        "says what it would drop first.</p>"
+        f'<form method="post" action="instance" class="new">{csrf}'
+        '<p class="field"><label for="older-than">Older than (days)</label>'
+        '<input id="older-than" name="older_than_days" value="30" inputmode="numeric"></p>'
+        '<button type="submit" name="action" value="prune-preview">What would go</button>'
+        '<button type="submit" name="action" value="prune">Forget them</button></form>'
+    )
+    return _fold("Upkeep: the lease, stranded verdicts, and forgetting old bodies", body)
 
 
 def _rows_for_standing(rows: Sequence[object]) -> str:
@@ -1559,7 +3070,8 @@ def why_it_will_not_work(
     worrying = [one for one in found if one.state is not doctor_module.State.OK]
     rows = _rows_for_standing(worrying)
     body = (
-        "<h1>Why it will not work</h1>"
+        '<h1>Diagnostics</h1><p class="says">Every check this instance runs on itself, and what '
+        "each one would stop working if it failed.</p>"
         + (
             f'<ul class="standing">{rows}</ul>'
             f'<p class="sub">{len(found) - len(worrying)} of {len(found)} check(s) are fine.</p>'
@@ -1567,7 +3079,10 @@ def why_it_will_not_work(
             else f'<p class="sub">All {len(found)} check(s) are fine.</p>'
         )
     )
-    return _document("Hullwork — doctor", body, acting=acting, here="doctor")
+    return _document(
+        "Hullwork — doctor", body, acting=acting, here="doctor",
+        projects=each_project(session),
+    )
 
 
 def what_it_received(settings: Settings, *, acting: Acting = READING) -> str:
@@ -1626,7 +3141,12 @@ def _what_this_instance_has_switched_on(session: Session, settings: Settings) ->
 
 
 def instance(
-    session: Session, settings: Settings, *, error_reporting: bool, acting: Acting = READING
+    session: Session,
+    settings: Settings,
+    *,
+    error_reporting: bool,
+    acting: Acting = READING,
+    said: str | None = None,
 ) -> str:
     """What `hullwork status` says, for somebody who does not have a terminal on this host.
 
@@ -1676,8 +3196,12 @@ def instance(
     # which is the same defect item 136 already found on this page once: a fact the instance knew,
     # put where nobody reading would find it. The interface design says this surface exists
     # to show what was verified and what was not; a count of attempts is not that, and this is.
-    desk = "".join(f"<li>{_h(line)}</li>" for line in outcomes.desk_lines(outcomes.desk(session)))
-    attempts = "".join(f"<li>{_h(line)}</li>" for line in outcomes.lines(outcomes.funnel(session)))
+    # **The page's skin of the same structure the terminal prints as sentences** (item 248). Six
+    # sections of prose bullets were 500 of this view's 779 words, and every bullet was a number
+    # with a sentence wrapped around it — so a reader comparing this week to last had to parse eight
+    # of them to find two figures.
+    desk = _desk_figures(outcomes.desk(session))
+    attempts = _funnel_figures(outcomes.funnel(session))
     spent = "".join(
         f"<li>{_h(line.strip())}</li>"
         for line in spend.lines(
@@ -1688,9 +3212,8 @@ def instance(
         )
     )
 
-    reviewed = "".join(
-        f"<li>{_h(line)}</li>" for line in outcomes.review_lines(outcomes.reviewed(session))
-    )
+    counted_reviews = outcomes.reviewed(session)
+    reviewed = _review_figures(counted_reviews, outcomes.review_lines(counted_reviews))
 
     prices = spend.Prices.from_settings(settings)
 
@@ -1700,10 +3223,14 @@ def instance(
     #: context second: a problem or a decision is something to *do*, and what the machine is busy
     #: with is something to *know*.
     body = (
+        _outcome(said)
+        # Every other view has one, and this is the busiest (item 223): a page whose first landmark
+        # is missing is the one where a screen reader has furthest to go.
+        + "<h1>This instance</h1>"
         # The answer and the decisions are the front door's now (item 212). They are still here,
         # from the same function, because an operator who opens the report on a bad morning should
         # not have to go back to learn whether anything wants them.
-        does_this_need_you(session, settings, acting, error_reporting=error_reporting)[0]
+        + does_this_need_you(session, settings, acting, error_reporting=error_reporting)[0]
         + _proof(
             session,
             merged=merged,
@@ -1720,32 +3247,62 @@ def instance(
         # The link row that used to live here is the rail now (item 212): two sets of navigation
         # on one page is two places to add the next noun to, and one of them will be forgotten.
         + '<div class="more">'
-        + _fold(
+        # **Sections rather than folds** (item 235, DR-0027). Five disclosures titled with
+        # sentences — *What arrived, and how much left your desk*, *Which half holds what, and what
+        # this instance allows* — is a page where every answer is one click and one guess away, and
+        # the guess is the part a reader cannot make.
+        + _section(
             # **Renamed once a real configuration page existed** (item 211). These seven rows are
             # state — version, forge, sweep, backlog — and calling them *configured* was harmless
             # while nothing else claimed the word. `/config` claims it now, and two things with one
             # name is the drift this repository has spent a week removing.
-            "How it is right now",
+            "How it is now",
+            "What this process is, and what it is wired to, at this moment.",
             f'<div class="wide"><table>{table}</table></div>',
         )
         # Before the attempts block, exactly as `status` orders them: this one has *what arrived*
         # as its denominator and that one has *what was attempted*, so a reader who opens one
         # should meet the wider question first.
-        + (_fold("What arrived, and how much left your desk", f"<ul>{desk}</ul>") if desk else "")
-        + (_fold("What its attempts came to", f"<ul>{attempts}</ul>") if attempts else "")
-        + (_fold("What they cost", f"<ul>{spent}</ul>") if spent else "")
-        + (_fold("What reviewers did", f"<ul>{reviewed}</ul>") if reviewed else "")
-        + _fold(
-            "Which half holds what, and what this instance allows",
-            _the_credential_split(session) + _what_this_instance_allows(settings),
+        + (
+            _section(
+                "What left your desk",
+                "Of everything that arrived, how much this instance took off you.",
+                desk,
+            )
+            if desk
+            else ""
         )
+        + (
+            _section(
+                "What attempts came to",
+                "Every attempt this instance has made, by how it ended.",
+                attempts,
+            )
+            if attempts
+            else ""
+        )
+        + (
+            _section("What they cost", "In tokens and in money, through one arithmetic.",
+                     f"<ul>{spent}</ul>")
+            if spent
+            else ""
+        )
+        + (
+            _section("What reviewers did", "What became of the pull requests it opened.", reviewed)
+            if reviewed
+            else ""
+        )
+        + _the_credential_split(session)
+        + _what_this_instance_allows(settings)
+        + _housekeeping(session, acting)
         + "</div>"
     )
     # The instance's own state, on the bar rather than in a folded table: it is the second question
     # a reader has, and item 167 had buried it under a disclosure.
     badge = ("ready", "ok") if report.ready else ("degraded", "bad")
     return _document(
-        "Hullwork — this instance", body, acting=acting, state=badge, here="instance"
+        "Hullwork — this instance", body, acting=acting, state=badge, here="instance",
+        projects=each_project(session),
     )
 
 
@@ -1755,13 +3312,21 @@ def instance(
 MAX_ITEMS = 200
 
 
-def _project_health(project: _Project) -> tuple[str, str]:
-    """Two sentences a reader looking at one client needs, and neither was on any page. Item 142.
+def _project_health(project: _Project, settings: Settings) -> tuple[str, str]:
+    """What is wrong with this project, and nothing else. Items 142 and 228.
 
-    **The credential**, from the audit `status` already stores on the project row rather than from a
-    forge request here: a page render must not spend one, and a reader refreshing would spend one
-    each time. `None` is *not asked yet* and is not a pass — item 073's rule, and the same
-    `None != False` this project has got wrong three times.
+    **The credential**, from the column the sweep writes rather than from a forge request here: a
+    page render must not spend one, and a reader refreshing would spend one each time. `None` is
+    *not measured* and is not a pass — item 073's rule, and the same `None != False` this project
+    has got wrong three times.
+
+    **It said *not asked yet* forever**, because it read a key inside the manifest JSON that nothing
+    ever wrote — so the command it told you to run would not have changed it either. The sweep
+    measures it now, on `forge_recheck_seconds`.
+
+    **And a state that is fine says nothing at all.** `cached manifest validates` was three internal
+    words describing a normal state at the volume of a fault; the operator asked what it meant,
+    which is the answer.
 
     **The manifest**, by validating the cached copy. A project whose stored manifest no longer
     parses has every incoming error land red (`ingest._manifest_for` degrades to that silently, by
@@ -1770,11 +3335,23 @@ def _project_health(project: _Project) -> tuple[str, str]:
     """
     from hullwork.manifest import Manifest
 
-    pushes = (project.manifest or {}).get("__ingest_can_push__") if project.manifest else None
+    pushes = project.ingest_token_can_push
+    # **Only what is not fine, and a count of what is** (item 203, applied here by item 228). A
+    # project whose credential is correctly narrow does not need a line saying so at the same
+    # volume as everything else; a project whose credential can push needs a loud one.
     credential = {
-        None: ("unknown", "not asked yet — `hullwork status` records this when it runs"),
-        True: ("bad", "its ingest credential CAN push, which DR-0009 forbids"),
-        False: ("good", "ingest credential reaches the repository and cannot push"),
+        None: (
+            "unknown",
+            "not measured yet — this instance asks the forge on its own clock, within "
+            f"{max(settings.forge_recheck_seconds, 60) // 60} minute(s) of a project being "
+            "connected",
+        ),
+        True: (
+            "bad",
+            "the ingest **token** can write code to this repository — measured, not inferred: a "
+            "request only a code scope allows was accepted. DR-0009 is what that breaks",
+        ),
+        False: ("good", ""),
     }[pushes if pushes is None else bool(pushes)]
 
     if not project.manifest:
@@ -1784,7 +3361,7 @@ def _project_health(project: _Project) -> tuple[str, str]:
             Manifest.model_validate(
                 {k: v for k, v in project.manifest.items() if not k.startswith("__")}
             )
-            manifest = ("good", "cached manifest validates")
+            manifest = ("good", "")
         except Exception:
             manifest = (
                 "bad",
@@ -1794,11 +3371,10 @@ def _project_health(project: _Project) -> tuple[str, str]:
     # `_as_code`, not `_h` (item 213). These two sentences were written for a terminal — one of
     # them names `hullwork projects refresh` — and escaping them served the backticks, which beside
     # a command name reads as a typo in the product rather than as a quotation of it.
-    return (
-        f'<li class="{credential[0]}">{_as_code(credential[1])}</li>'
-        f'<li class="{manifest[0]}">{_as_code(manifest[1])}</li>',
-        credential[0] + manifest[0],
+    said = "".join(
+        f'<li class="{tone}">{_as_code(text)}</li>' for tone, text in (credential, manifest) if text
     )
+    return said, credential[0] + manifest[0]
 
 
 def _project_columns(session: Session, project_id: int) -> str:
@@ -1857,7 +3433,7 @@ def _what_was_rotated(rotated: tuple[str, str | None] | None) -> str:
         return ""
     slug, token = rotated
     return (
-        f"<h2>{_h(slug)} has a new webhook secret</h2>"
+        f'<h2 class="name">{_h(slug)} has a new webhook secret</h2>'
         "<p><b>The URL your tracker was posting to has stopped working</b> — update it before the "
         "next error, or nothing arrives. <b>This is the only time the new one is shown</b>: only "
         "its hash is stored.</p>"
@@ -1936,11 +3512,259 @@ def _what_was_just_made(made: object) -> str:
     token = getattr(made, "token", "")
     slug = getattr(project, "slug", "")
     return (
-        f'<h2>{_h(slug)} is connected</h2>'
+        f'<h2 class="name">{_h(slug)} is connected</h2>'
         "<p>Point your error tracker's webhook at this. <b>This is the only time it is shown</b> — "
         "only its hash is stored, so nobody, including this page, can print it again. Lose it and "
         "<code>hullwork projects rotate-secret</code> issues another, which stops the old one.</p>"
         f'<pre class="wide"><code>/webhooks/glitchtip/{_h(slug)}/{_h(token)}</code></pre>'
+    )
+
+
+def _a_project_page(
+    session: Session,
+    slug: str,
+    where: str,
+    label: str,
+    says: str,
+    body: Callable[[_Project], str],
+    *,
+    acting: Acting,
+    said: str | None = None,
+    refused: str | None = None,
+    rotated: tuple[str, str | None] | None = None,
+) -> str | None:
+    """One feature, one project, one page. Item 237.
+
+    **The operator's own correction of item 235**: that item named the features and then put each
+    on a page holding every project's, which is a wall at two projects and unusable at ten. Nobody
+    works by feature across clients; they work on a client.
+
+    `None` when there is no project with that slug, so the route answers the same `404` an unknown
+    path gets — a distinct body would let somebody enumerate the slugs an instance serves.
+    """
+    found = session.scalars(select(_Project).where(_Project.slug == slug)).one_or_none()
+    if found is None:
+        return None
+    return _document(
+        f"Hullwork — {found.slug} {label.lower()}",
+        f'<h1>{_h(found.slug)} <span class="also">{_h(label)}</span></h1>'
+        # **Above the body, because it is the answer to what was just pressed** (item 245). A
+        # sentence below eight hundred words of report is a sentence nobody sees, and this one says
+        # the pull request does not exist yet — which is the part a reader has to read.
+        #
+        # **A refusal answers here too** (item 250). It used to answer with the list of projects,
+        # rendered at this URL: six dead links handed to somebody whose forge had just gone down.
+        f'<p class="says">{says}</p>'
+        f"{_refusal(refused)}{_what_was_rotated(rotated)}{_outcome(said)}" + body(found),
+        acting=acting,
+        here=where,
+        # **Three levels down from `/page/<token>/`** — `projects/<slug>/<feature>` — and every URL
+        # on this page is relative on purpose, which is what keeps the token out of the HTML. Item
+        # 227 was this arithmetic being wrong by one; it 404s every link in the rail when it is.
+        up="../../",
+        inside=found.slug,
+        counts=how_much_of_each(session, found.id),
+    )
+
+
+def dependencies(
+    session: Session,
+    settings: Settings,
+    slug: str,
+    *,
+    acting: Acting = READING,
+    said: str | None = None,
+    refused: str | None = None,
+) -> str | None:
+    """What is published against what this project pins, and what came of trying the fixes."""
+    del settings
+    return _a_project_page(
+        session,
+        slug,
+        "dependencies",
+        "Dependencies",
+        "What OSV publishes against the versions this project pins, and what happened when this "
+        "instance tried the published fix. Asked on its own clock, every six hours.",
+        lambda one: what_is_published_against_it(session, one, acting=acting),
+        acting=acting,
+        said=said,
+        refused=refused,
+    )
+
+
+def deliveries(
+    session: Session, settings: Settings, slug: str, *, acting: Acting = READING,
+    said: str | None = None, refused: str | None = None,
+) -> str | None:
+    """What this project's tracker sent, and whether it was understood. Item 231's feature."""
+    del settings
+    return _a_project_page(
+        session,
+        slug,
+        "deliveries",
+        "Deliveries",
+        "What this project's error tracker has sent, and whether it could be read. A call with the "
+        "wrong secret is refused before anything is written, so an empty list means nobody knocked "
+        "<strong>with a working secret</strong> — not that nobody knocked.",
+        lambda one: what_arrived_for(session, one),
+        acting=acting,
+        said=said,
+        refused=refused,
+    )
+
+
+def _fixes_for(session: Session, project: _Project, prices: Prices | None) -> str:
+    """Every attempt this project has had, with what it reached and what it cost.
+
+    **`consumed` is the column that matters** and it is not derivable from the outcome (DR-0003): a
+    run that never reached the model must not spend the item's one attempt, whatever went wrong
+    afterwards, and a page that inferred it from the verdict would tell somebody their one try is
+    gone when it is not.
+    """
+    rows = list(
+        session.execute(
+            select(_Attempt, _Item)
+            .join(_Item, _Attempt.item_id == _Item.id)
+            .where(_Item.project_id == project.id)
+            .order_by(_Attempt.id.desc())
+            .limit(MAX_ITEMS)
+        ).all()
+    )
+    if not rows:
+        return (
+            "<p>No attempt has run for this project. An item is attempted when it is queued and "
+            "the dispatcher is running; an amber one waits for you first.</p>"
+        )
+    listed = "".join(
+        # **Two levels up, because this view is three deep** (item 249). `projects/<slug>/fixes`
+        # resolving `items/27` gives `projects/<slug>/items/27`, which is a 404 — the arithmetic
+        # item 227 was written about, on the one view its guard did not reach. `_its_items`, one
+        # route along, has had `../../` since it was written.
+        f'<tr><td data-label="item"><a href="../../items/{one.item_id}">'
+        f"{_h(bug.title[:70])}</a></td>"
+        f'<td data-label="reached">{_h(one.phase_reached.value)}</td>'
+        f'<td data-label="ended">{_h(one.outcome.value if one.outcome else "still running")}</td>'
+        f'<td data-label="its one try">{"spent" if one.consumed else "not spent"}</td>'
+        f'<td data-label="when">{_h(_ago(one.started_at))}</td></tr>'
+        for one, bug in rows
+    )
+    cost = _project_cost(session, project.id, prices)
+    return (
+        '<div class="wide"><table class="list"><tr><th>item</th><th>reached</th><th>ended</th>'
+        f"<th>its one try</th><th>when</th></tr>{listed}</table></div>{cost}"
+    )
+
+
+def fixes(
+    session: Session, settings: Settings, slug: str, *, acting: Acting = READING,
+    said: str | None = None, refused: str | None = None,
+) -> str | None:
+    """What this instance tried on this project, how far each got, and what it cost. Item 235.
+
+    The attempts existed only as a cost summary and a phase strip on an item. *What has this thing
+    actually done* had no page, which for a product whose claim is **a fix that was run** is the
+    page a reader wants second.
+    """
+    prices = spend.Prices.from_settings(settings)
+    return _a_project_page(
+        session,
+        slug,
+        "fixes",
+        "Fixes",
+        "Every attempt this instance has made on this project, how far it got through the gates, "
+        "and whether it spent the item's one try. An attempt that never reached the model does not "
+        "spend it (DR-0003), which is why that column is recorded rather than inferred.",
+        lambda one: _fixes_for(session, one, prices),
+        acting=acting,
+        said=said,
+        refused=refused,
+    )
+
+
+def errors(
+    session: Session, settings: Settings, slug: str, *, acting: Acting = READING,
+    said: str | None = None, refused: str | None = None,
+) -> str | None:
+    """This project's bugs, newest first. Item 237.
+
+    Separated from the board above it because they answer different questions: the board is *who is
+    blocked*, this is *what is there*, and a view holding both is the one the operator kept saying
+    he could not read.
+    """
+    del settings
+    return _a_project_page(
+        session,
+        slug,
+        "errors",
+        "Errors",
+        "The bugs this project's error tracker sent. Hullwork calls each one an <em>item</em>: the "
+        "bug, plus everything it has done about it.",
+        lambda one: _its_items(session, one),
+        acting=acting,
+        said=said,
+        refused=refused,
+    )
+
+
+def _its_items(session: Session, project: _Project) -> str:
+    """The project's items as a table, bounded and saying so."""
+    rows = list(
+        session.scalars(
+            select(_Item)
+            .where(_Item.project_id == project.id)
+            .order_by(_Item.id.desc())
+            .limit(MAX_ITEMS)
+        ).all()
+    )
+    if not rows:
+        return "<p>No item has arrived for this project.</p>"
+    total = int(
+        session.scalar(
+            select(func.count()).select_from(_Item).where(_Item.project_id == project.id)
+        )
+        or 0
+    )
+    listed = "".join(
+        f'<tr><td data-label="id"><a href="../../items/{one.id}">{one.id}</a></td>'
+        f'<td data-label="title">{_h(one.title)}</td>'
+        f'<td data-label="state">{_h(one.state.value)}</td>'
+        f'<td data-label="lane">{_h(one.lane.value)}</td>'
+        f'<td data-label="since">{_h(_ago(one.state_since))}</td></tr>'
+        for one in rows
+    )
+    bound = f"<p>Showing {len(rows)} of {total}.</p>" if total > len(rows) else ""
+    return (
+        bound + '<div class="wide"><table class="list"><tr><th>id</th><th>title</th><th>state</th>'
+        f"<th>lane</th><th>since</th></tr>{listed}</table></div>"
+    )
+
+
+def settings_for(
+    session: Session, settings: Settings, slug: str, *, acting: Acting = READING,
+    said: str | None = None, refused: str | None = None,
+    rotated: tuple[str, str | None] | None = None,
+) -> str | None:
+    """Everything this instance will do to this project on command. Item 237.
+
+    **Where a rotated secret is shown** (item 250). It was shown on the list of every project,
+    rendered at this project's URL — so the one answer in this product that can never be repeated
+    arrived on a page whose every link was dead.
+    """
+    return _a_project_page(
+        session,
+        slug,
+        "settings",
+        "Settings",
+        "Everything this instance will do to this project when told to, and nothing it does on its "
+        "own.",
+        lambda one: _the_rest_of_its_life(one, acting)
+        + _sweeping(one, acting)
+        + _reading_the_repository(one, acting)
+        + what_this_can_do(session, one, settings),
+        acting=acting,
+        said=said,
+        refused=refused,
+        rotated=rotated,
     )
 
 
@@ -1951,7 +3775,7 @@ def projects(
     acting: Acting = READING,
     just_made: object = None,
     refused: str | None = None,
-    rotated: tuple[str, str | None] | None = None,
+    said: str | None = None,
 ) -> str:
     """Every project this instance serves. Item 142, and the level the tree was missing.
 
@@ -1966,24 +3790,34 @@ def projects(
     """
     prices = spend.Prices.from_settings(settings)
     found = list(session.scalars(select(_Project).order_by(_Project.slug)).all())
-    answered = _what_was_just_made(just_made) + _what_was_rotated(rotated) + _refusal(refused)
+    # **A rotated secret is not answered here** (item 250). It was, and this view is written for
+    # `/page/<token>/projects` — returned from `projects/<slug>` its every link resolved one level
+    # too deep. It is shown where the button is, on that project's settings.
+    answered = _what_was_just_made(just_made) + _refusal(refused)
     if not found:
         body = (
             '<div class="head"><h1>Projects</h1>'
             + _the_form(acting, answered=answered)
             + "</div><p>No project is registered yet.</p>"
         )
-        return _document("Hullwork — projects", body, acting=acting, here="projects")
+        return _document(
+            "Hullwork — projects", body, acting=acting, here="projects",
+            projects=each_project(session),
+        )
 
-    blocks: list[str] = []
+    blocks: list[str] = [_outcome(said)]
     for project in found[:MAX_ITEMS]:
-        health, _ = _project_health(project)
+        health, _ = _project_health(project, settings)
         blocks.append(
             f'<h2 class="name"><a href="projects/{_h(project.slug)}">{_h(project.slug)}</a></h2>'
             f'<p class="sub">{_h(project.forge)} · {_h(project.repo)}'
             f"{'' if project.active else ' · not active'}</p>"
-            f"<ul>{health}</ul>"
-            f"{_project_columns(session, project.id)}"
+            + (f"<ul>{health}</ul>" if health else "")
+            + f"{_project_columns(session, project.id)}"
+            # **A list is a list** (items 223 and 225). The controls went to the project's own
+            # view first; the feature block followed, because it was 85% of this page and rendered
+            # once per project. On a list a reader is not looking *at* a project — they are looking
+            # *for* one.
         )
     bound = (
         f"<p>Showing {min(len(found), MAX_ITEMS)} of {len(found)}.</p>"
@@ -2000,11 +3834,24 @@ def projects(
         + "".join(blocks)
     )
     del prices
-    return _document("Hullwork — projects", body, acting=acting, here="projects")
+    return _document(
+        "Hullwork — projects", body, acting=acting, here="projects",
+        projects=each_project(session),
+    )
 
 
-def project(session: Session, settings: Settings, slug: str) -> str | None:
-    """One project: health, board, cost, items. `None` when there is no project with that slug.
+def project(
+    session: Session,
+    settings: Settings,
+    slug: str,
+    *,
+    acting: Acting = READING,
+    said: str | None = None,
+) -> str | None:
+    """A project's overview: what is wrong, where everything is, and what each feature holds.
+
+    **The overview, and not the whole project** (item 237). Every feature has its own page under
+    this one now; what is here is the answer to *how is this project* and a way into each of them.
 
     `None` rather than a message, so the route answers the same `404` an unknown path gets — a
     distinct body would let somebody enumerate the slugs an instance serves with a valid token.
@@ -2013,45 +3860,67 @@ def project(session: Session, settings: Settings, slug: str) -> str | None:
     if found is None:
         return None
 
-    prices = spend.Prices.from_settings(settings)
-    health, _ = _project_health(found)
-    rows = list(
-        session.scalars(
-            select(_Item)
-            .where(_Item.project_id == found.id)
-            .order_by(_Item.id.desc())
-            .limit(MAX_ITEMS)
-        ).all()
-    )
-    listed = "".join(
-        f"<tr><td><a href=\"../items/{item_row.id}\">{item_row.id}</a></td>"
-        f"<td>{_h(item_row.title)}</td>"
-        f"<td>{_h(item_row.state.value)}</td>"
-        f"<td>{_h(item_row.lane.value)}</td>"
-        f"<td>{_h(_ago(item_row.state_since))}</td></tr>"
-        for item_row in rows
-    )
-    total = len(list(session.scalars(select(_Item).where(_Item.project_id == found.id)).all()))
-    bound = f"<p>Showing {len(rows)} of {total}.</p>" if total > len(rows) else ""
-
-    body = (
-        f"<h1>{_h(found.slug)}</h1>"
-        f'<p class="sub">{_h(found.forge)} · {_h(found.repo)}'
-        f"{'' if found.active else ' · not active'} · "
-        f'<a href="../projects">All projects</a> · <a href="..">This instance</a></p>'
-        f"<h2>Health</h2><ul>{health}</ul>"
-        f"<h2>Where everything is</h2>{_project_columns(session, found.id)}"
-        f"<h2>What its attempts cost</h2>{_project_cost(session, found.id, prices)}"
-        f"<h2>Items</h2>{bound}"
-        + (
-            "<table><tr><th>id</th><th>title</th><th>state</th><th>lane</th><th>since</th></tr>"
-            f"{listed}</table>"
-            if listed
-            else "<p>No item has arrived for this project.</p>"
+    health, _ = _project_health(found, settings)
+    counts = how_much_of_each(session, found.id)
+    # **The rail says how much; this says what it is.** A reader who has just arrived on a project
+    # should not have to read a sidebar's badges to find out which of its five features has anything
+    # in it, and a link that says what it holds is one they can decide about before clicking.
+    where_to = "".join(
+        f'<li class="{"c-refused" if how_many else "c-idle"}">'
+        f'<span class="pill">{how_many if how_many else "—"}</span>'
+        f'<span class="name"><a href="{_h(found.slug)}/{where}">{_h(name)}</a></span>'
+        f'<p class="why">{says}</p></li>'
+        for where, name, how_many, says in (
+            (
+                "errors", "Errors", counts.errors,
+                "the bugs its tracker sent, and what state each is in",
+            ),
+            (
+                "fixes", "Fixes", counts.fixes,
+                "what this instance attempted, how far it got, and what it cost",
+            ),
+            (
+                "dependencies", "Dependencies", counts.dependencies,
+                "what OSV publishes against what it pins, and what came of trying the fix",
+            ),
+            (
+                "deliveries", "Deliveries", counts.deliveries,
+                "what its tracker actually sent, and whether it could be read",
+            ),
         )
     )
-    return _document(f"Hullwork — {found.slug}", body)
-
+    body = (
+        _outcome(said)
+        + f'<h1>{_h(found.slug)} <span class="also">Overview</span></h1>'
+        f'<p class="sub">{_h(found.forge)} · {_h(found.repo)}'
+        f"{'' if found.active else ' · not active'}</p>"
+        # **Nothing to say is the common case now** (item 228): a project whose credential is
+        # narrow and whose manifest reads is a project with no health section at all, rather than
+        # two green lines at the volume of a fault.
+        + (_section("What is wrong", "", f"<ul>{health}</ul>") if health else "")
+        + _section(
+            "Where everything is",
+            "Every item this project has, by who it is waiting on.",
+            _project_columns(session, found.id),
+        )
+        + _section(
+            "What it holds",
+            "Each of this project's features, and how much is in it.",
+            f'<ul class="standing">{where_to}</ul>',
+        )
+    )
+    return _document(
+        f"Hullwork — {found.slug}",
+        body,
+        acting=acting,
+        here="",
+        # **How far this view is from `/page/<token>/`** (item 227). Every URL on this page is
+        # relative on purpose — that is what keeps the token out of the HTML — so a view one level
+        # down that does not say so sends every rail link to `projects/<noun>`, and all of them 404.
+        up="../",
+        inside=found.slug,
+        counts=counts,
+    )
 
 
 #: The lines `evidence` emits around a collapsible block, and around the captured output inside it.
@@ -2175,6 +4044,182 @@ _NOT_STORED = (
 )
 
 
+def front_door(
+    session: Session,
+    settings: Settings,
+    *,
+    acting: Acting = READING,
+    error_reporting: bool = False,
+    said: str | None = None,
+) -> str:
+    """What needs you, and then one line per project. Item 237.
+
+    **The door answers one question and lists one thing.** Before this it was every item on the
+    instance in one table, which is a list nobody wants first: with two projects it is already two
+    projects\' bugs interleaved, and *whose* is the column a reader has to scan for.
+
+    The number against a project is **what is waiting on a person**, not how much exists. A count of
+    items reads the same on a project that is fine and one that is stuck, and the whole of a front
+    door is *which of these wants me*.
+    """
+    from hullwork.models import DependencyReport
+
+    answer, badge = does_this_need_you(session, settings, acting, error_reporting=error_reporting)
+    found = list(session.scalars(select(_Project).order_by(_Project.slug)).all())
+    rows = ""
+    for one in found:
+        counts = how_much_of_each(session, one.id)
+        # **Two states, two sentences, because they are two different things** (item 247). This
+        # summed `waiting-approval` and `human-only` and called both *waiting on you*, two lines
+        # under a headline that counts only the first and had just said **Nothing needs you**. Both
+        # numbers were right; one name for them was not. A decision is owed on the first; the second
+        # is work no agent may attempt, and nothing is owed until somebody chooses to do it.
+        # Bound rather than closed over: `one` is the loop variable, and a closure reading it would
+        # answer for whichever project the loop was on when it ran (the shape of the bug item 233's
+        # `_read` carries a comment about).
+        def _in(*states: ItemState, project_id: int = one.id) -> int:
+            return int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(_Item)
+                    .where(_Item.project_id == project_id, _Item.state.in_(states))
+                )
+                or 0
+            )
+
+        waiting = _in(ItemState.WAITING_APPROVAL)
+        only_you = _in(ItemState.HUMAN_ONLY)
+        report = session.get(DependencyReport, one.id)
+        said_of: list[str] = []
+        if waiting:
+            said_of.append(f"<strong>{waiting} awaiting your decision</strong>")
+        if only_you:
+            said_of.append(f"{only_you} only a person can do")
+        if counts.errors:
+            said_of.append(f"{counts.errors} item(s)")
+        # **Three states, and *could not ask* is one of them** (DR-0024). A project whose report
+        # failed must not read the same as one with nothing published against it.
+        if report is None:
+            said_of.append("dependencies not asked about yet")
+        elif not report.asked:
+            said_of.append('<span class="bad">could not ask OSV</span>')
+        elif report.findings:
+            packages = len({str(one.get("package") or "") for one in report.findings})
+            said_of.append(f"{packages} package(s) with something published")
+        if not one.active:
+            said_of.append("not watched")
+        # **What is waiting on a person is the action**, so it sits where an action sits and leads
+        # to the items it counted (item 166). Everything else about the project is context.
+        owed = (
+            f'<a href="items?in=waiting">{waiting} waiting</a>' if waiting else ""
+        )
+        rows += (
+            '<tr class="subject"><td class="who">'
+            f'<span class="dot {"waiting" if waiting else "faint"}"></span>'
+            f'<a class="thing" href="projects/{_h(one.slug)}">{_h(one.slug)}</a>'
+            f'<span class="said">{" · ".join(said_of) or "nothing to report"}</span></td>'
+            f'<td class="do">{owed}</td></tr>'
+        )
+    body = (
+        _outcome(said)
+        + answer
+        # **What it is doing, above what there is** (item 242): the operator watching a five-minute
+        # verification through `docker logs` had no other way to see it.
+        + _what_it_says_it_is_doing(session)
+        + _section(
+            "Projects",
+            # **The paragraph explaining the list is documentation** (DR-0028): it was re-read every
+            # day by somebody who had understood it the first time.
+            "One line each. Everything else about a project lives inside it.",
+            f'<table class="subjects narrow">{rows}</table>'
+            if found
+            else "<p>No project is connected yet.</p>",
+        )
+        + what_it_has_been_doing(session)
+    )
+    return _document(
+        "Hullwork",
+        body,
+        acting=acting,
+        here="./",
+        state=badge,
+        projects=each_project(session),
+    )
+
+
+#: What each of `_COLUMNS` means, for the heading that now carries the grouping. DR-0028.
+#:
+#: **The words are the reader's question, not the state machine's.** `pr-open` is not a state a
+#: person cares about; *a draft pull request is waiting for somebody to read it* is.
+_WHO_IS_BLOCKED: dict[str, str] = {
+    "waiting": "a decision from you, or work no agent may attempt",
+    "review": "a draft pull request is waiting for somebody to read it",
+    "arrived": "triaged and not queued yet",
+    "queued": "eligible, and the dispatcher takes one per turn",
+    "working": "an attempt is running now",
+    "closed": "merged, rejected, or answered — nothing owed",
+}
+
+
+def _items_by_who_is_blocked(rows: Sequence[_Item], pulls: Mapping[int, str]) -> str:
+    """Every item, grouped by who is blocked and ordered by whether that is you. DR-0028, item 247.
+
+    **`_COLUMNS` is the grouping, and it already existed.** Inventing a second vocabulary for this
+    list is how it and the strip on the front page would come to disagree about what *waiting* means
+    — which is the drift DR-0027 spent an item undoing. So the six columns are the six bands, in an
+    order this view chooses: **what the reader owns first, `closed` last**.
+
+    The chronological order the flat table used put the one item waiting for a person at the top by
+    luck — it happened to be the most recently seen. At two hundred items that is wherever the clock
+    left it.
+    """
+    owned = [one for one in _COLUMNS if one[4]]
+    rest = [one for one in _COLUMNS if not one[4] and one[1] != "closed"]
+    closed = [one for one in _COLUMNS if one[1] == "closed"]
+    bands = []
+    for title, key, colour, states, _ in [*owned, *rest, *closed]:
+        here = [row for row in rows if row.state in states]
+        if not here:
+            continue
+        lines = "".join(_an_item(row, colour, pulls) for row in here)
+        bands.append(
+            f'<section class="band"><h3><span>{_h(title)}</span>'
+            f'<em>{_h(_WHO_IS_BLOCKED.get(key, ""))}</em><b>{len(here)}</b></h3>'
+            f'<table class="subjects narrow">{lines}</table></section>'
+        )
+    return "".join(bands)
+
+
+def _an_item(row: _Item, colour: str, pulls: Mapping[int, str]) -> str:
+    """One item, one row: which one, whose, what it says, when, and where it reached.
+
+    **No state column** (DR-0028): it is the heading above this row, and printing it here is the
+    twenty-five identical words the decision is named after. The lane stays — it is what
+    distinguishes two rows inside one band, which is the test a column has to pass to exist.
+    """
+    reached = (
+        f'<a href="items/{row.id}">{_h(pulls[row.id])}</a>'
+        if row.id in pulls
+        else (_h(row.forge_issue_ref) if row.forge_issue_ref else "")
+    )
+    # **`never` is a fact about the item, not context about it** (item 166): this one can never be
+    # attempted. Rendered in the context cell it was clipped to `N…` by that column's ellipsis, and
+    # a truncated warning is worse than none — it reads as a rendering fault rather than a state.
+    stuck = ' <span class="stuck">never</span>' if _stuck(row) else ""
+    title = _h(row.title.splitlines()[0] if row.title else "")
+    return (
+        '<tr class="subject">'
+        f'<td class="who"><span class="dot {_h(colour.removeprefix("c-"))}"></span>'
+        f'<a class="thing" href="items/{row.id}">#{row.id}</a>'
+        f'<span class="said">{title}</span>{stuck}</td>'
+        f'<td class="at">{_h(row.project.slug)} · {_h(row.lane.value)}</td>'
+        f'<td class="fold"><time datetime="{_h(row.last_seen)}" title="{_h(row.last_seen)}">'
+        f"{_h(_ago(row.last_seen))}</time></td>"
+        f'<td class="do">{reached}</td>'
+        "</tr>"
+    )
+
+
 def items(
     session: Session,
     *,
@@ -2215,40 +4260,11 @@ def items(
         ):
             pulls[item_id] = ref
 
-    body_rows = []
-    for row in rows:
-        reached = (
-            _h(pulls[row.id])
-            if row.id in pulls
-            else (_h(row.forge_issue_ref) if row.forge_issue_ref else "—")
-        )
-        state = _h(row.state.value) + (
-            ' <span class="stuck">never</span>' if _stuck(row) else ""
-        )
-        body_rows.append(
-            "<tr>"
-            f'<td><a href="items/{row.id}">#{row.id}</a></td>'
-            f"<td>{_h(row.project.slug)}</td>"
-            f"<td>{state}</td>"
-            f"<td>{_h(row.lane.value)}</td>"
-            f"<td>{_h(row.title.splitlines()[0] if row.title else '')}</td>"
-            f"<td>{_h(row.last_seen)}</td>"
-            f"<td>{reached}</td>"
-            "</tr>"
-        )
+    grouped = _items_by_who_is_blocked(rows, pulls)
 
     scope = "" if states is None else f" in <strong>{_h(only)}</strong>"
     if rows:
-        # **The widest table in the product, and the only one that was not allowed to scroll**
-        # (item 215). Seven columns on the view a person lands on: without this the body itself
-        # scrolls sideways on a narrow window, which moves the navigation while you read a title.
-        table = (
-            '<div class="wide"><table class="list">'
-            "<tr><th>item</th><th>project</th><th>state</th><th>lane</th>"
-            "<th>title</th><th>last seen</th><th>issue / pull</th></tr>"
-            + "".join(body_rows)
-            + "</table></div>"
-        )
+        table = grouped
         # The bound, stated. Silently showing 200 of 4,000 is how a page teaches a reader that an
         # instance has done less than it has.
         shown = (
@@ -2261,7 +4277,7 @@ def items(
         shown = (
             "Nothing here now"
             if states is not None
-            else "No items yet. Nothing has arrived from the error tracker on this instance"
+            else _why_it_is_empty(session)
         )
         # **The emptiness has a cause and the cause has an action** (item 214). On an instance with
         # no projects the sentence above is true and useless: nothing arrived because nothing is
@@ -2289,12 +4305,23 @@ def items(
     # **Only what is true of what is on screen.** *Most recently seen first* under an empty list
     # describes an order there is nothing to order, and the link to the instance was a second copy
     # of a noun the rail already carries.
-    order = " Most recently seen first." if rows else ""
+    # **It said *most recently seen first* and that stopped being true** (item 247): the list is
+    # grouped by who is blocked, and the clock only decides inside a group.
+    order = " Grouped by who is blocked; newest first inside each." if rows else ""
+    # **A link and the page it reaches have to be called the same thing** (item 235). The rail said
+    # *Items* and so did this heading, and neither is a word somebody arriving with a broken
+    # checkout would look for. *Errors* is what they are; *item* is what this product calls one, and
+    # that sentence is worth one line rather than a heading nobody can navigate by.
     body = (
-        answer + "<h1>Items</h1>"
+        answer + "<h1>Errors</h1>"
+        '<p class="says">The bugs your error tracker sent. Hullwork calls each one an '
+        "<em>item</em>.</p>"
         f'<p class="sub">{shown}{scope}.{order}{everything}</p>' + table
     )
-    return _document("Hullwork — items", body, acting=acting, here=here, state=badge)
+    return _document(
+        "Hullwork — errors", body, acting=acting, here=here, state=badge,
+        projects=each_project(session),
+    )
 
 
 def _above_the_fold(attempt: Attempt, prices: Prices | None) -> str:
@@ -2374,6 +4401,17 @@ def _next_action(found: Item, acting: Acting, *, up: str) -> str:
         parts.append(f"<p><strong>Waiting for</strong> {_own_prose(waiting)}</p>")
     if stuck:
         parts.append(f'<p class="sub">But {_h(stuck)}.</p>')
+    # **The one state `requeue` exists for** (item 093), and it had a route and no button until
+    # item 223: an item left `human-only` by a red baseline holds an attempt it never spent, and the
+    # only way to give it back was an `UPDATE` against a SQLite file inside a Docker volume.
+    if found.state is ItemState.HUMAN_ONLY and acting.csrf:
+        parts.append(
+            f'<form method="post" action="{up}items/{found.id}" class="decide">'
+            f'<input type="hidden" name="csrf" value="{_h(acting.csrf)}">'
+            '<button type="submit" name="action" value="requeue">Queue it again</button></form>'
+            '<p class="sub">Only when what stopped it was the environment. Its attempt was never '
+            "spent, so it still has one.</p>"
+        )
     if found.state is ItemState.WAITING_APPROVAL and not stuck:
         # The buttons when there is a session, and otherwise how to get them — here as well as on
         # the front page, because a reader can arrive straight at an item from a forge issue.
@@ -2409,7 +4447,7 @@ def _decide(found: Item, acting: Acting, *, up: str) -> str:
     return ""
 
 
-def just_the_login(acting: Acting) -> str:
+def just_the_login(acting: Acting, *, going_to: str = "") -> str:
     """The login and nothing else, for the door that replaces the token (DR-0021, item 204).
 
     **Nothing about the instance is on it.** A page showing a name, a version or a count beside the
@@ -2434,12 +4472,12 @@ def just_the_login(acting: Acting) -> str:
         f'<link rel="icon" href="{_FAVICON}">'
         f"<title>Sign in</title><style>{_STYLE}</style></head><body>\n"
         '<div class="wrap">'
-        f'<h1 class="what">Sign in</h1>{_login(acting, up="")}'
+        f'<h1 class="what">Sign in</h1>{_login(acting, up="", going_to=going_to)}'
         "</div></body></html>\n"
     )
 
 
-def _login(acting: Acting, *, up: str) -> str:
+def _login(acting: Acting, *, up: str, going_to: str = "") -> str:
     """The login, or what to run when there is nothing to log in to. Item 168.
 
     **`autocomplete="current-password"` and a real `<form>` are the whole feature.** A browser
@@ -2453,12 +4491,45 @@ def _login(acting: Acting, *, up: str) -> str:
             f'<p class="sub">Too many wrong passwords. This waits '
             f"{_h(acting.locked_minutes)} more minute(s) before it will try again.</p>"
         )
+    # **Where they were going** (item 224). Signing in used to land on the front door whatever URL
+    # you had opened, which on an instance you reach by bookmark means finding the view again by
+    # hand every twelve hours.
+    onward = (
+        f'<input type="hidden" name="going_to" value="{_h(going_to)}">' if going_to else ""
+    )
     return (
-        f'<form method="post" action="{up}login" class="login">'
+        f'<form method="post" action="{up}login" class="login">{onward}'
         '<input type="password" name="password" autocomplete="current-password" '
         'placeholder="operator password" aria-label="operator password" required>'
         '<button type="submit">Sign in</button></form>'
     )
+
+
+#: The views a `going_to` may name, so a redirect after signing in cannot be pointed anywhere else.
+#: A literal list rather than a pattern: `../` and `//host` and `%2e%2e` are all things a pattern
+#: written in a hurry lets through, and there are eight of these.
+WHERE_YOU_CAN_LAND: tuple[str, ...] = (
+    "", "items", "instance", "projects", "doctor", "config",
+)
+
+
+def where_it_may_land(asked: str | None) -> str:
+    """The tail of a path this instance will send somebody to after they sign in, or `""`.
+
+    **Anything it does not recognise becomes the front door**, silently: a login that argues with
+    you about where you were going is worse than one that takes you home, and an open redirect is
+    the classic way a sign-in form becomes somebody else's.
+    """
+    if not asked:
+        return ""
+    tail = asked.removeprefix(f"{PREFIX}/{MINE}/").strip("/")
+    if tail in WHERE_YOU_CAN_LAND:
+        return tail
+    # One shape beyond the flat list, because it is where half the work is: a project of its own.
+    named = tail.removeprefix("projects/")
+    if tail.startswith("projects/") and "/" not in named and named.replace("-", "").isalnum():
+        return tail
+    return ""
 
 
 def _signing_in(acting: Acting, *, up: str = "") -> str:
@@ -2509,8 +4580,138 @@ def _how_to_decide(acting: Acting, found: Item | None = None, *, up: str = "") -
     )
 
 
+def the_error_itself(session: Session, item_id: int) -> str:
+    """The full error as the tracker recorded it. Item 232, item 036's table finally on the page.
+
+    **The webhook cuts the title at 100 characters**, and for a `KeyError` or a `ValueError` the
+    half it cuts is often the input that reproduces the bug. The item's title is the cut one; this
+    is the whole one, and it is nowhere else on this page.
+
+    **Nothing is scrubbed here.** The adapter does it on the way in, which is what that table exists
+    to say after an audit found a live DSN in one field and this product's own webhook token in
+    another, on real events. A second scrubber would be a second thing to keep correct.
+    """
+    from hullwork.models import FetchedEvent
+
+    seen = list(
+        session.scalars(
+            select(FetchedEvent)
+            .where(FetchedEvent.item_id == item_id)
+            .order_by(FetchedEvent.occurred_at.desc().nullslast(), FetchedEvent.id.desc())
+        ).all()
+    )
+    if not seen:
+        return ""
+
+    newest = seen[0]
+    # **`prune` empties this row and keeps it** (item 231's neighbour): rendering *no frames* for a
+    # pruned event would report an error with no stack rather than one whose stack this instance
+    # chose to forget. Different sentences, and the second is the true one.
+    forgotten = not newest.frames and not newest.packages
+    said = []
+    if newest.message:
+        said.append(
+            f'<p class="sub">The whole message, untruncated — the webhook cuts it at 100 '
+            f"characters and the half it cuts is often what reproduces the bug:</p>"
+            f'<pre class="wide"><code>{_h(newest.message)}</code></pre>'
+        )
+    facts = [
+        (label, value)
+        for label, value in (
+            ("type", newest.exception_type),
+            ("where", newest.culprit),
+            ("level", newest.level),
+            ("handled", None if newest.handled is None else ("yes" if newest.handled else "no")),
+            ("release", newest.release),
+            ("host", newest.server_name),
+            ("happened", _ago(newest.occurred_at) if newest.occurred_at else None),
+        )
+        if value
+    ]
+    said.append(
+        "<ul>"
+        + "".join(f"<li>{_h(label)}: <code>{_h(value)}</code></li>" for label, value in facts)
+        + "</ul>"
+    )
+    if len(seen) > 1:
+        said.append(
+            f'<p class="sub">{len(seen)} occurrences of this are stored. Two samples of one bug '
+            "are worth more than one: what differs between them is usually the input that "
+            "triggers it, and the tracker notifies once per issue and never again.</p>"
+        )
+    if forgotten:
+        said.append(
+            '<p class="sub">Its frames, its locals and its pinned versions were forgotten by '
+            "<code>hullwork prune</code>. The error is not missing them — this instance stopped "
+            "keeping them.</p>"
+        )
+    else:
+        said.append(_the_frames(newest.frames))
+        if newest.packages:
+            said.append(
+                _fold(
+                    f"What was installed when it failed — {len(newest.packages)} version(s)",
+                    '<div class="wide"><table class="list"><tr><th>package</th>'
+                    "<th>version</th></tr>"
+                    + "".join(
+                        f'<tr><td data-label="package">{_h(name)}</td>'
+                        f'<td data-label="version">{_h(version)}</td></tr>'
+                        for name, version in sorted(newest.packages.items())
+                    )
+                    + "</table></div>",
+                )
+            )
+    return _fold("The error, as the tracker recorded it", "".join(said))
+
+
+def _the_frames(frames: list[dict[str, object]]) -> str:
+    """The stack, innermost last, with the line each one stopped on.
+
+    The locals get their own disclosure: scrubbed, and still the thing a reader is least often
+    looking for and most likely to be surprised to find rendered.
+    """
+    if not frames:
+        return '<p class="sub">No frames were recorded for this occurrence.</p>'
+    said = []
+    for frame in frames:
+        where = _h(str(frame.get("filename") or frame.get("module") or "?"))
+        line = frame.get("lineno")
+        held = frame.get("variables")
+        said.append(
+            f'<li><code>{where}</code>'
+            + (f" line {_h(line)}" if line else "")
+            + (f" in <code>{_h(frame.get('function'))}</code>" if frame.get("function") else "")
+            + (
+                f'<pre class="wide"><code>{_h(frame.get("context_line"))}</code></pre>'
+                if frame.get("context_line")
+                else ""
+            )
+            + (
+                _fold(
+                    "What the code was holding here",
+                    '<div class="wide"><table class="list">'
+                    + "".join(
+                        f'<tr><td data-label="name">{_h(name)}</td>'
+                        f'<td data-label="was">{_h(value)}</td></tr>'
+                        for name, value in dict(held).items()
+                    )
+                    + "</table></div>",
+                )
+                if isinstance(held, dict) and held
+                else ""
+            )
+            + "</li>"
+        )
+    return f"<h2>Where it stopped</h2><ol>{''.join(said)}</ol>"
+
+
 def item(
-    session: Session, settings: Settings, item_id: int, *, acting: Acting = READING
+    session: Session,
+    settings: Settings,
+    item_id: int,
+    *,
+    acting: Acting = READING,
+    said: str | None = None,
 ) -> str | None:
     """One item and every attempt on it. `None` when there is no such item, which the route 404s.
 
@@ -2580,10 +4781,12 @@ def item(
 
     title = found.title.splitlines()[0] if found.title else f"item {found.id}"
     body = (
-        f"<h1>#{_h(found.id)} {_h(title)}</h1>"
+        _outcome(said)
+        + f"<h1>#{_h(found.id)} {_h(title)}</h1>"
         f'<p class="sub"><a href="../items">All items</a> · <a href="../">Instance</a></p>'
         f'<div class="band"><table>{table}</table></div>'
         + _next_action(found, acting, up="../")
+        + the_error_itself(session, found.id)
         + (
             f'<p class="sub">{_h(_NOT_STORED)}</p>' + "".join(blocks)
             if blocks
@@ -2610,6 +4813,7 @@ def item(
         acting=acting,
         up="../",
         state=(found.state.value, tone),
+        projects=each_project(session),
     )
 
 

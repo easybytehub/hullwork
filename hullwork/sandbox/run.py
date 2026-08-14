@@ -463,7 +463,7 @@ class Sandbox:
                 out_of_memory=bool(state.get("OOMKilled")),
             )
         finally:
-            run_docker([self.docker, "rm", "-f", self._container], timeout=60)
+            run_docker([self.docker, "rm", "-f", "-v", self._container], timeout=60)
             self._container = None
             if self.volume:
                 self._pull()
@@ -560,7 +560,7 @@ class Sandbox:
         try:
             yield carrier
         finally:
-            run_docker([self.docker, "rm", "-f", carrier], timeout=60)
+            run_docker([self.docker, "rm", "-f", "-v", carrier], timeout=60)
 
 
     # --- the worktree the container owns (item 055) --------------------------------------------
@@ -702,7 +702,7 @@ class Sandbox:
         try:
             yield carrier
         finally:
-            run_docker([self.docker, "rm", "-f", carrier], timeout=60)
+            run_docker([self.docker, "rm", "-f", "-v", carrier], timeout=60)
 
     def _wait(self, timeout: int) -> bool:
         """Poll until the container exits. False if it had to be killed."""

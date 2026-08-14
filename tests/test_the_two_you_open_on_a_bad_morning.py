@@ -76,7 +76,11 @@ def test_the_doctor_is_on_the_page(db: Session, client: TestClient) -> None:
 
     assert shown.status_code == 200
     assert "check(s)" in shown.text, "it says how many were asked"
-    assert "Why it will not work" in shown.text
+    # **The heading is the rail's own word for it since item 235.** *Why it will not work* was a
+    # sentence, and a heading a reader has to navigate by cannot be one; the sentence is still on
+    # the page, one line under it.
+    assert "<h1>Diagnostics</h1>" in shown.text
+    assert "would stop working if it failed" in shown.text
 
 
 def test_the_configuration_is_on_the_page(db: Session, client: TestClient) -> None:

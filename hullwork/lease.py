@@ -149,6 +149,27 @@ def renew(session: Session, holder: str) -> bool:
     return True
 
 
+def doing(session: Session, holder: str, what: str | None) -> None:
+    """Record what this dispatcher is doing, or `None` for idle. Item 242. Never raises.
+
+    **Best effort, and deliberately so.** This is a page's trace, not the work: a database that
+    refuses this write must not take down a verification that is already running. It is also why
+    the timestamp moves only when the sentence changes — a step that has been going for nine
+    minutes should read as nine minutes, not reset every turn of the loop.
+    """
+    try:
+        lease = session.get(DispatcherLease, 1)
+        if lease is None or lease.holder != holder:
+            return
+        if lease.doing != what:
+            lease.doing = what
+            lease.doing_since = _now() if what else None
+            session.commit()
+    except Exception:  # a trace for a page is never worth a rollback of the work
+        log.warning("could not record what this dispatcher is doing", extra={"holder": holder})
+        session.rollback()
+
+
 def release(session: Session, holder: str) -> None:
     """Give the lease up on the way out, so the next start does not wait for it to expire.
 
@@ -158,6 +179,9 @@ def release(session: Session, holder: str) -> None:
     lease = session.get(DispatcherLease, 1)
     if lease is not None and lease.holder == holder:
         lease.renewed_at = RELEASED
+        # A stopped dispatcher is not still doing the last thing it was doing (item 242).
+        lease.doing = None
+        lease.doing_since = None
         session.commit()
         log.info("dispatcher lease released", extra={"holder": holder})
 

@@ -170,6 +170,28 @@ def test_prose_is_held_to_a_measure_and_the_shell_is_not() -> None:
     assert "62rem" not in (shell.group(0)), "the document width is still the shell's width"
 
 
+def test_prose_inside_a_fold_is_held_to_the_same_measure() -> None:
+    """**Found on atlas, on the section item 233 had just added.** `.sheet > p` is a child selector
+    and everything a `<details>` holds is one level deeper, so an open fold's prose ran the full
+    1500px while the identical sentence above it stopped at 68ch.
+
+    **Written twice.** The first version asserted `.sheet details > p` was in the stylesheet, which
+    it was, and which matched nothing on any page: `_fold` wraps its body in a `<div>`, so the
+    paragraphs are that div's children and not the `<details>`'s. A test that reads a selector out
+    of the stylesheet and stops there is checking that I typed what I meant to type.
+
+    So the wrapper's class is read off `_fold`'s own output and the rule is looked up by it. Rename
+    the div and this fails, which is the point.
+    """
+    inside = r'<details><summary>[^<]*</summary><div class="([^"]+)"'
+    wrapper = re.search(inside, page._fold("s", ""))
+
+    assert wrapper is not None, "a fold no longer wraps its body in anything this can measure"
+    held = f".{wrapper.group(1)} > p"
+
+    assert held in page._STYLE, f"nothing holds {held} to a measure"
+
+
 # --- what the views serve -------------------------------------------------------------------------
 
 

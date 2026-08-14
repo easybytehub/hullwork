@@ -53,6 +53,19 @@ class Need:
     #: What to do about it, in the words a person would type. Never "configure it correctly".
     fix: str
     met: Callable[[Checkout], bool]
+    #: **Which of the three things answers this**, named rather than inferred. Item 220: a page
+    #: serving one instance can supply the manifest and its own variable names, and cannot supply a
+    #: checkout — item 142 forbids a forge request per render. So *unmet* means three different
+    #: things there, and only one of them is a defect:
+    #:
+    #:   * `manifest`  — the instance holds it (DR-0012), so unmet is a fact about the project;
+    #:   * `checkout`  — nothing on the instance can answer it, so unmet reads *not asked yet*;
+    #:   * `instance`  — a credential, which on the receiver may be the dispatcher's by design
+    #:     (DR-0005) and is downgraded exactly as `doctor.not_from_here` downgrades it.
+    #:
+    #: `hullwork features` ignores it: run against a real checkout all three are answerable, which
+    #: is why the distinction never had to exist until a page needed it.
+    reads: str = "manifest"
 
 
 @dataclass(frozen=True)
@@ -159,6 +172,7 @@ FEATURES: tuple[Feature, ...] = (
                 fix="commit one, or pin with `==` — a declaration is a range and a range is not a "
                 "fact about what your build resolved to",
                 met=_pins_anything,
+                reads="checkout",
             ),
         ),
         limits=(
@@ -176,6 +190,7 @@ FEATURES: tuple[Feature, ...] = (
                 what="a lock file or a pinned requirements file, committed",
                 fix="commit one, or pin with `==`",
                 met=_pins_anything,
+                reads="checkout",
             ),
             Need(
                 what="a hullwork.yml naming an image (`runtime.base`) and your test command",
@@ -218,6 +233,7 @@ FEATURES: tuple[Feature, ...] = (
                 what="a model credential on the instance that runs it",
                 fix=f"set {MODEL_KEY} to an API key from any provider (DR-0004)",
                 met=lambda c: MODEL_KEY in c.configured,
+                reads="instance",
             ),
             Need(
                 what="`autofix.agent` naming an engine this instance holds",
@@ -247,12 +263,14 @@ FEATURES: tuple[Feature, ...] = (
                 what="a credential able to write to your repository",
                 fix=f"set {CODE_TOKEN}. It is the one thing here that writes anything anywhere",
                 met=lambda c: CODE_TOKEN in c.configured,
+                reads="instance",
             ),
             Need(
                 what="an `origin` remote, so the repository can be named",
                 fix="add one — a coordinate cannot be guessed from a directory name, and a wrong "
                 "guess opens a pull request somewhere else",
                 met=lambda c: "origin" in c.configured,
+                reads="checkout",
             ),
         ),
         permits=(
@@ -292,6 +310,7 @@ FEATURES: tuple[Feature, ...] = (
                 what="a model credential on the instance that runs it",
                 fix=f"set {MODEL_KEY} to an API key from any provider (DR-0004)",
                 met=lambda c: MODEL_KEY in c.configured,
+                reads="instance",
             ),
         ),
         limits=(

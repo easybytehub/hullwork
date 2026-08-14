@@ -216,7 +216,7 @@ class Cable:
         # Last chance at the journal: after the volume goes it is gone, and an attempt that died
         # before anything asked for its seal is exactly the one worth reading afterwards.
         self._pull_journal()
-        _quietly(self._docker, ["rm", "-f", self.container])
+        _quietly(self._docker, ["rm", "-f", "-v", self.container])
         _quietly(self._docker, ["network", "rm", self.network])
         if self._cable_volume:
             _quietly(self._docker, ["volume", "rm", "-f", self._cable_volume])
@@ -556,7 +556,7 @@ class Cable:
         try:
             yield carrier
         finally:
-            _quietly(self._docker, ["rm", "-f", carrier])
+            _quietly(self._docker, ["rm", "-f", "-v", carrier])
 
     def _wait_until_listening(self) -> None:
         """Wait for the gateway to say it has bound, or say what it said instead.

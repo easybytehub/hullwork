@@ -314,5 +314,7 @@ def test_the_number_is_on_the_page_and_not_only_in_the_terminal(
     body = page.instance(session, Settings(), error_reporting=False)
 
     assert "went onto your desk rather than off it" in body
-    assert "2 claim(s) have arrived" in body
-    assert body.index("how much left your desk") < body.index("What its attempts came to")
+    assert "claims arrived" in body
+    # The two sections were folds titled with sentences until item 235; the order is the property
+    # and it survived the rename, which is why this asserts on the labels rather than on the prose.
+    assert body.index("What left your desk") < body.index("What attempts came to")

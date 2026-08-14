@@ -20,12 +20,23 @@ from __future__ import annotations
 import json
 import logging
 import tomllib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+
+class ResolveError(RuntimeError):
+    """The socket refused something this needed: a volume, a carrier, a copy.
+
+    Its own class rather than `SandboxError`, because this is not an attempt and nothing here holds
+    a sandbox — and it is turned into an ordinary non-zero exit by `in_a_container`, so a failure to
+    reach Docker is reported as *this upgrade could not be moved* rather than as a crash in a
+    dispatcher that has other work to do.
+    """
 
 #: How long a resolver may take. Generous: it is a registry round trip plus a graph solve, and a
 #: cold npm cache on a large tree is genuinely slow.
@@ -165,14 +176,25 @@ def command_for(resolver: Resolver, package: str, version: str) -> str:
     return resolver.command.format(package=package, version=version)
 
 
-def missing_from(resolver: Resolver, present: Sequence[str]) -> list[str]:
-    """Which of the files this resolver needs are not in the checkout.
+def beside(path: str) -> str:
+    """The directory a path is in, as the repository writes it, and `""` at the root."""
+    return path.rsplit("/", 1)[0] if "/" in path else ""
+
+
+def missing_from(resolver: Resolver, present: Sequence[str], at: str = "") -> list[str]:
+    """Which of the files this resolver needs are not **beside the lock**. Item 239.
 
     Checked before the container starts: a `uv.lock` with no `pyproject.toml` beside it cannot be
     resolved by anything, and finding that out after pulling an image is a minute wasted on a fact
     that was on disk.
+
+    **`at` is the whole of item 239.** This compared basenames anywhere in the checkout, so a
+    `pyproject.toml` in `backend/` satisfied a check about a lock in `frontend/` — and the honest
+    refusal it exists to produce was unreachable for any repository with more than one lock file.
+    Measured on `simplecheck`, which is a monorepo: it pulled an image to be told the file was not
+    where it was looking.
     """
-    names = {path.rsplit("/", 1)[-1] for path in present}
+    names = {path.rsplit("/", 1)[-1] for path in present if beside(path) == at}
     return [needed for needed in resolver.needs if needed not in names]
 
 
@@ -184,14 +206,22 @@ def upgrade(
     version: str,
     present: Sequence[str],
     run: Callable[[Resolver, Path, str], tuple[int, str]],
+    at: str = "",
 ) -> Result:
     """Move the graph, then check that it actually moved. Item 175.
 
     `run` takes the resolver, the directory to mount and the command, and returns an exit code and
     the tool's output. Injected for the reason every other boundary here is: this stays testable
     without a daemon, and nothing in this module knows Docker exists.
+
+    **`at` is where the lock lives**, relative to the worktree, and it is item 239. This mounted the
+    root and ran the tool there, so a monorepo — `backend/uv.lock`, `frontend/package.json` — was
+    told *No `pyproject.toml` found in current directory or any parent directory* and recorded
+    `cannot-move`, which is a sentence about somebody else's repository that was our own working
+    directory. It defaults to the root, so a repository with one lock at the top behaves exactly as
+    it did.
     """
-    absent = missing_from(resolver, present)
+    absent = missing_from(resolver, present, at)
     if absent:
         return Result(
             Outcome.MISSING,
@@ -199,11 +229,12 @@ def upgrade(
             f"the manifest to know which versions are allowed, and there is none here.",
         )
 
-    code, output = run(resolver, worktree, command_for(resolver, package, version))
+    where = worktree / at if at else worktree
+    code, output = run(resolver, where, command_for(resolver, package, version))
     if code != 0:
         return Result(Outcome.FAILED, output)
 
-    lock_path = worktree / resolver.lock
+    lock_path = where / resolver.lock
     landed = version_in_lock(lock_path.read_text(encoding="utf-8"), resolver.lock, package)
     if landed != version:
         # **The tool's exit code is not the verdict.** Every one of these resolves happily within
@@ -218,21 +249,73 @@ def upgrade(
     return Result(Outcome.RESOLVED)
 
 
+@contextmanager
+def _carrying(context: Path, docker: str) -> Iterator[str]:
+    """A named volume holding a copy of `context`, seeded and read back over the socket. Item 240.
+
+    **A bind mount cannot be used here and this is the third time this repository has learned it.**
+    `-v {path}:/w` is resolved by the *daemon*: the dispatcher runs in a container, so the path
+    exists in one filesystem and is looked up in another. The daemon finds nothing, mounts an empty
+    directory, and the resolver reports the project has no manifest — measured on atlas, where every
+    dependency verification this instance ever ran took this path.
+
+    Item 055 moved the attempt's worktree off a bind mount for exactly this, and item 082 the
+    contract directory. This is that recipe with a different working directory, and it is imported
+    from `sandbox.run` rather than written a second time.
+    """
+    import secrets
+
+    from hullwork.sandbox.docker import run_docker
+    from hullwork.sandbox.inventory import label_args
+    from hullwork.sandbox.run import CARRIER_IMAGE
+
+    name = f"hullwork-resolve-{secrets.token_hex(4)}"
+    made = run_docker([docker, "volume", "create", *label_args(), name], timeout=60)
+    if made.returncode != 0:
+        raise ResolveError(made.stdout + made.stderr)
+
+    def carrier() -> str:
+        created = run_docker(
+            [docker, "create", "--volume", f"{name}:/w", CARRIER_IMAGE, "true"], timeout=120
+        )
+        if created.returncode != 0:
+            raise ResolveError(created.stdout + created.stderr)
+        return created.stdout.strip()
+
+    try:
+        one = carrier()
+        try:
+            pushed = run_docker([docker, "cp", f"{context}/.", f"{one}:/w"], timeout=300)
+        finally:
+            run_docker([docker, "rm", "-f", "-v", one], timeout=60)
+        if pushed.returncode != 0:
+            raise ResolveError(pushed.stdout + pushed.stderr)
+        yield name
+        # **Back to the dispatcher's own filesystem**, because the regenerated lock is the entire
+        # point: everything downstream — `version_in_lock`, the rebuild, the guard that restores
+        # what this touched — reads files, and reads them here.
+        two = carrier()
+        try:
+            run_docker([docker, "cp", f"{two}:/w/.", str(context)], timeout=300)
+        finally:
+            run_docker([docker, "rm", "-f", "-v", two], timeout=60)
+    finally:
+        run_docker([docker, "volume", "rm", "-f", name], timeout=60)
+
+
 def in_a_container(
     resolver: Resolver, context: Path, command: str, *, docker: str = "docker"
 ) -> tuple[int, str]:
-    """Run one resolver's command in an ephemeral container. The only Docker in this module.
+    """Run one resolver's command against a copy of the checkout. The only Docker in this module.
 
-    **A bind mount rather than a volume**, unlike an attempt's worktree (item 055), and the
-    difference is worth stating so it does not later look like an oversight. An attempt's phases run
-    **the project's own untrusted code**, where a bind mount would let it write to the host as the
-    uid that started it. This runs one package manager's own command with no project code executing,
-    and the entire purpose is to get a regenerated file back — which a bind mount does and a volume
-    does not.
+    **On a volume rather than a bind mount** (item 240). The docstring here used to argue the
+    opposite — a bind mount gets the regenerated file back, a volume does not — and that was true
+    while the dispatcher ran on a host and false the moment it ran in a container, where the daemon
+    resolves the path in its own filesystem and mounts nothing. Neither the comment nor anything
+    else was re-read when the ground moved.
 
-    **`--user` is not a detail.** Without it `npm` leaves root-owned files in the operator's
-    checkout, and the next ordinary command they run fails with a permission error nothing connects
-    back to us.
+    **`--user` is not a detail.** Without it `npm` leaves root-owned files in the copy, and the
+    `docker cp` back hands the operator's checkout a file they cannot write.
 
     **And this one has a network, deliberately.** Resolving *is* asking the registry what exists. It
     is the trade `image.build` already makes, and it changes nothing about the phase that later runs
@@ -241,27 +324,33 @@ def in_a_container(
     import os
     import subprocess
 
-    argv = [
-        docker, "run", "--rm",
-        "--user", f"{os.getuid()}:{os.getgid()}",
-        # A resolver that hangs must not hold the run: these are network calls to a registry.
-        "--stop-timeout", "10",
-        "-v", f"{context}:/w",
-        "-w", "/w",
-        # `HOME` so the tools have somewhere to write their caches; `/w` is the only writable path
-        # and a cache in the checkout would be left behind for the operator to find.
-        "-e", "HOME=/tmp",
-        resolver.image,
-        "sh", "-lc", command,
-    ]
-    log.info("resolving", extra={"image": resolver.image, "command": command})
     try:
-        done = subprocess.run(  # noqa: S603
-            argv, capture_output=True, text=True, check=False, timeout=RESOLVE_TIMEOUT_SECONDS
-        )
-    except subprocess.TimeoutExpired:
-        return 1, f"the resolver did not finish within {RESOLVE_TIMEOUT_SECONDS}s"
-    return done.returncode, (done.stdout + done.stderr).strip()
+        with _carrying(context, docker) as volume:
+            argv = [
+                docker, "run", "--rm",
+                "--user", f"{os.getuid()}:{os.getgid()}",
+                # A resolver that hangs must not hold the run: these are network calls to a
+                # registry.
+                "--stop-timeout", "10",
+                "-v", f"{volume}:/w",
+                "-w", "/w",
+                # `HOME` so the tools have somewhere to write their caches; `/w` is the only
+                # writable path and a cache in the checkout would be left behind for the operator.
+                "-e", "HOME=/tmp",
+                resolver.image,
+                "sh", "-lc", command,
+            ]
+            log.info("resolving", extra={"image": resolver.image, "command": command})
+            try:
+                done = subprocess.run(  # noqa: S603
+                    argv, capture_output=True, text=True, check=False,
+                    timeout=RESOLVE_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                return 1, f"the resolver did not finish within {RESOLVE_TIMEOUT_SECONDS}s"
+            return done.returncode, (done.stdout + done.stderr).strip()
+    except ResolveError as failed:
+        return 1, str(failed)
 
 
 def touches(resolver: Resolver) -> tuple[str, ...]:

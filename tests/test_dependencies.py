@@ -429,7 +429,7 @@ def test_verify_hands_the_source_to_a_build_that_reads_it(
     """
     import pytest
 
-    from hullwork import cli
+    from hullwork import upgrades
     from hullwork.manifest import parse_manifest
 
     asked: list[dict[str, object]] = []
@@ -455,7 +455,7 @@ def test_verify_hands_the_source_to_a_build_that_reads_it(
     # The first build is the baseline and is the only one this needs: it either carries the source
     # or it does not, and everything after it is the same call.
     with pytest.raises(Exception):  # noqa: B017 - it stops at the sandbox, after the build
-        cli._verify_one(
+        upgrades.verify_one(
             tmp_path, ["requirements.txt"], lambda p: (tmp_path / p).read_text(),
             manifest,
             dependencies.Dependency("PyPI", "jinja2", "2.4.1", "requirements.txt"),
@@ -475,7 +475,7 @@ def test_a_project_whose_install_does_not_read_the_source_still_gets_none(
     """The cheap path stays cheap: the tag does not move and the image is reused between runs."""
     import pytest
 
-    from hullwork import cli
+    from hullwork import upgrades
     from hullwork.manifest import parse_manifest
     from hullwork.sandbox import image as image_module
 
@@ -496,7 +496,7 @@ def test_a_project_whose_install_does_not_read_the_source_still_gets_none(
     )
     monkeypatch.setattr(image_module, "build", watch)  # type: ignore[attr-defined]
     with pytest.raises(Exception):  # noqa: B017
-        cli._verify_one(
+        upgrades.verify_one(
             tmp_path, ["requirements.txt"], lambda p: (tmp_path / p).read_text(),
             manifest,
             dependencies.Dependency("PyPI", "jinja2", "2.4.1", "requirements.txt"),
@@ -625,3 +625,201 @@ def test_a_refusal_is_counted_rather_than_only_printed() -> None:
     assert bump.needs_of(reports[0]) is bump.Needs.BLOCKED
     assert bump.summary(reports)[bump.Needs.BLOCKED] == 1
     assert "not one of the files your image is built from" in printed.getvalue()
+
+
+# --- the environment the project asked for (item 238) ------------------------------------------
+
+
+def _box_built_for(tmp_path: Path, declared: str, monkeypatch: object) -> dict[str, object]:
+    """Run `verify_one` far enough to see the sandbox it constructs, and report its arguments."""
+    import io
+
+    import pytest
+
+    from hullwork import dependencies, upgrades
+    from hullwork.manifest import parse_manifest
+    from hullwork.sandbox import image as image_module
+    from hullwork.sandbox import run as run_module
+
+    made: dict[str, object] = {}
+
+    class Built:
+        tag = "img:1"
+
+    class Box:
+        def __init__(self, **kwargs: object) -> None:
+            made.update(kwargs)
+            raise RuntimeError("far enough: the box exists and this is what it was given")
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        image_module, "build", lambda *a, **k: Built()
+    )
+    monkeypatch.setattr(run_module, "Sandbox", Box)  # type: ignore[attr-defined]
+    (tmp_path / "requirements.txt").write_text("jinja2==2.4.1\n")
+    manifest = parse_manifest(
+        "project: p\ngit: {provider: github, repo: o/r}\n"
+        'tests: "pytest"\ntest_path: tests\n'
+        "runtime: {base: python-3.12, install: pip, "
+        f"dependencies: [requirements.txt]{declared}}}\n"
+    )
+    # **`pytest.raises(Exception)` would swallow a `NameError`** and report the wrong thing passing,
+    # which this file has already been bitten by once. The message is checked.
+    with pytest.raises(RuntimeError, match="far enough"):
+        upgrades.verify_one(
+            tmp_path, ["requirements.txt"], lambda p: (tmp_path / p).read_text(),
+            manifest,
+            dependencies.Dependency("PyPI", "jinja2", "2.4.1", "requirements.txt"),
+            ["2.10.1"], io.StringIO(),
+        )
+    return made
+
+
+def test_the_sandbox_gets_the_services_the_manifest_declared(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    """**Item 238, and eleven wrong verdicts on the operator's own instance.** `work.py` has passed
+    these since item 052; this path never did, so a project declaring `postgres-16` ran its suite
+    against nothing listening on 5432 and was reported `already-red`.
+
+    That verdict is DR-0026's honest one — *no claim can be made either way* — and it was the truth
+    about the wrong thing: the suite was not failing, it was never given the database it asked for.
+    """
+    made = _box_built_for(tmp_path, ", services: [postgres-16]", monkeypatch)
+
+    assert made.get("services") == ["postgres-16"], "the box runs without the declared database"
+
+
+def test_a_project_that_declares_none_gets_none(tmp_path: Path, monkeypatch: object) -> None:
+    """The other half, and the cheaper one: a project with no services must not pay for a container
+    it never asked for — this path is the one built to be cheap."""
+    made = _box_built_for(tmp_path, "", monkeypatch)
+
+    assert made.get("services") == []
+
+
+def test_the_mover_runs_where_the_finding_says_the_lock_is(monkeypatch: object) -> None:
+    """**Item 239, and the assertion that could not be written before it.** This lived three levels
+    of nesting inside `verify_one`, so *does it run beside the lock* was untestable — and it was
+    wrong for every monorepo while the suite stayed green.
+
+    `simplecheck` is one: `backend/uv.lock`, `backend/pyproject.toml`, `frontend/package.json`. It
+    mounted the worktree root, `uv` answered *No `pyproject.toml` found in current directory or any
+    parent directory*, and that was recorded as `cannot-move` — a sentence about our own working
+    directory, stored as a fact about somebody else's repository.
+    """
+    from pathlib import Path
+
+    from hullwork import resolve, upgrades
+
+    uv = resolve.resolver_for("backend/uv.lock")
+    assert uv is not None
+    asked: dict[str, object] = {}
+
+    def upgrade(**kwargs: object) -> resolve.Result:
+        asked.update(kwargs)
+        return resolve.Result(resolve.Outcome.RESOLVED)
+
+    monkeypatch.setattr(resolve, "upgrade", upgrade)  # type: ignore[attr-defined]
+    move = upgrades.mover_for(uv, "backend/uv.lock", "cryptography", {"version": "50.0.0"}, [])
+
+    assert move(Path("/w")) is None
+    assert asked["at"] == "backend", "the resolver runs somewhere other than beside the lock"
+    assert asked["version"] == "50.0.0", "the candidate is read when the mover is built, not run"
+
+
+def test_what_is_guarded_is_where_the_repository_keeps_it(monkeypatch: object) -> None:
+    """`touches` names the files relative to the lock. On a monorepo a guard listing
+    `pyproject.toml` protects a path that does not exist, while `backend/pyproject.toml` — which the
+    resolver does rewrite — goes unwatched, and the next candidate's baseline describes the previous
+    one. That is item 174's defect, one directory over."""
+    del monkeypatch
+    from hullwork import resolve, upgrades
+
+    uv = resolve.resolver_for("backend/uv.lock")
+    assert uv is not None
+
+    guarded = upgrades.files_touched_by(uv, "backend/uv.lock")
+
+    assert "backend/uv.lock" in guarded
+    assert "backend/pyproject.toml" in guarded
+    assert "pyproject.toml" not in guarded
+
+
+def test_the_images_a_verification_built_are_removed(monkeypatch: object) -> None:
+    """**Item 241, found by reading an hour of the dispatcher's own execution.** No errors in the
+    log at all — 224 lines, every one INFO — and the disk at 100%: seven sandbox images of 1.09GB,
+    one every six minutes, which is the verification queue's cadence.
+
+    Each candidate builds its own image, correctly: the lock changed, so the environment is a
+    different environment. Nothing removed them, and eighteen candidates were still to come.
+    """
+    from hullwork import upgrades
+    from hullwork.sandbox import run as run_module
+
+    asked: list[list[str]] = []
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "hullwork.sandbox.docker.run_docker",
+        lambda argv, **k: asked.append(argv),
+    )
+
+    upgrades._drop_images(["hullwork-sandbox:abc123"])
+
+    assert ["docker", "image", "rm", "hullwork-sandbox:abc123"] in asked
+    # The cache's name is derived from the tag in two places, and this is what keeps them agreeing.
+    owned = run_module.Sandbox(image="hullwork-sandbox:abc123", worktree=Path("/w"))._env_cache()
+    assert ["docker", "volume", "rm", "-f", owned] in asked
+
+
+def test_a_disk_that_will_not_let_go_is_not_a_wrong_verdict(monkeypatch: object) -> None:
+    """A host that could not delete an image is a host with debris on it, which is worse than it
+    was and is **not** a claim about somebody's upgrade.
+
+    This runs from a `stack.callback`, so anything raised here replaces what the verification was
+    already reporting: the verdict was measured, and it would arrive as a crash instead.
+    """
+    from hullwork import upgrades
+
+    def refuse(argv: list[str], **kwargs: object) -> None:
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr("hullwork.sandbox.docker.run_docker", refuse)  # type: ignore[attr-defined]
+
+    upgrades._drop_images(["x"])  # does not raise
+
+
+def test_the_verification_removes_what_it_built_when_it_ends(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    """**The half a unit test of `_drop_images` cannot reach**: that the tags are collected as they
+    are built and handed over when the stack unwinds. Registered on the way in rather than returned,
+    because a candidate that fails half way through has still built an image."""
+    asked: list[list[str]] = []
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "hullwork.sandbox.docker.run_docker", lambda argv, **k: asked.append(argv)
+    )
+
+    _box_built_for(tmp_path, "", monkeypatch)
+
+    removed = [argv for argv in asked if argv[:3] == ["docker", "image", "rm"]]
+    assert removed == [["docker", "image", "rm", "img:1"]], "the image it built is still there"
+
+
+def test_versions_are_compared_as_versions() -> None:
+    """`5.0.10` is newer than `5.0.9`, and sorts before it as a string — a rule built on strings
+    would skip the one upgrade that mattered. Item 243."""
+    from hullwork.dependencies import newer
+
+    assert newer("5.0.10", "5.0.9") is True
+    assert newer("5.0.9", "5.0.10") is False
+    assert newer("2.1.3", "5.0.6") is False
+    assert newer("5.0.7", "5.0.6") is True
+    # Different depths, and a leading `v`, which npm advisories carry. Both directions, because
+    # only one of them separates "pad the shorter one" from "compare what is there": `1.2.0` and
+    # `1.2` are the same version, and without padding the longer one reads as newer.
+    assert newer("v2", "1.9.9") is True
+    assert newer("1.2", "1.2.0") is False
+    assert newer("1.2.0", "1.2") is False
+    # Unreadable on either side is not a comparison, and the caller is told so rather than guessed
+    # at: `None` means *try it*.
+    assert newer("RELEASE-10", "RELEASE-9") is None
+    assert newer("1.0.0", "not-a-version") is None

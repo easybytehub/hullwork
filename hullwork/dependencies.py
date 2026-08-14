@@ -56,6 +56,33 @@ _PINNED = re.compile(r"^\s*([A-Za-z0-9._-]+)\s*(?:\[[^\]]*\])?\s*==\s*([^\s;#]+)
 _A_REQUIREMENT = re.compile(r"^\s*[A-Za-z0-9._]")
 
 
+#: The leading numeric core of a version — `5.0.6` out of `5.0.6-rc1+build.7`. Both ecosystems this
+#: product reads spell that part the same way, which is why one function serves npm and PyPI.
+_CORE = re.compile(r"^\s*v?(\d+(?:\.\d+)*)")
+
+
+def newer(candidate: str, than: str) -> bool | None:
+    """Whether `candidate` is a later version than `than`, or `None` when it cannot be told.
+
+    **`None` is the point of this signature.** A version neither side can parse is not a version to
+    drop silently: OSV carries `1.2.3.RELEASE`, `2024-11-01` and `0.9.0.beta` among the ordinary
+    ones, and a comparison that guessed would either try nonsense or hide a real fix. Unknown means
+    *try it*, and the caller says so.
+
+    Numbers as numbers, because `5.0.10` sorts before `5.0.9` as a string, and a rule built on that
+    would skip the one upgrade that mattered.
+    """
+    here, there = _CORE.match(candidate), _CORE.match(than)
+    if here is None or there is None:
+        return None
+    left = [int(part) for part in here.group(1).split(".")]
+    right = [int(part) for part in there.group(1).split(".")]
+    width = max(len(left), len(right))
+    left += [0] * (width - len(left))
+    right += [0] * (width - len(right))
+    return left > right
+
+
 @dataclass(frozen=True)
 class Dependency:
     """One pinned package, and which file said so.
