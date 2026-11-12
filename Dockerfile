@@ -6,7 +6,7 @@
 # pointer somebody else moves: two builds of the same commit can differ, which makes a reproducible
 # build a coincidence. The digest is the manifest list, so buildx still picks amd64 or arm64 by
 # itself. Dependabot proposes the bump; a human takes it.
-FROM python:3.12-slim@sha256:646fb0bca3dd3ea1bcc6feb72c17ed16eed6e10cffc732fcc1478bd3e7f02d7b AS build
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS build
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
@@ -23,7 +23,7 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install ".${EXTRAS}"
 
 # --- runtime: no build tools, no source tree, no root ------------------------
-FROM python:3.12-slim@sha256:646fb0bca3dd3ea1bcc6feb72c17ed16eed6e10cffc732fcc1478bd3e7f02d7b AS runtime
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
